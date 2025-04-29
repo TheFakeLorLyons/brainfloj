@@ -1,0 +1,10 @@
+js
+/.cpcache
+/.lsp/
+/.clj-kondo
+.calva
+.nrepl-port
+.shadow-cljs
+node_modules
+native/*
+!native/compiled-libs.tar
