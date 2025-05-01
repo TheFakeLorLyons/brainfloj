@@ -1,5 +1,6 @@
 (ns floj.record
-  (:require [floj.brainflow :as brainflow]
+  (:require [floj.brainflow.boardshim :as brainflow]
+            [floj.api :as api]
             [floj.keybindings :as kb]
             [floj.state :as state])
   (:import [java.awt.event KeyListener KeyEvent]

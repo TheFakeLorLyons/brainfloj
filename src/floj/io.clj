@@ -71,9 +71,12 @@
     (when-not (.exists file)
       (let [default-profile {:name "default"
                              :created-at (java.util.Date.)
-                             :sampling-rate 250
-                             :channels {:eeg ["Unknown"]}
-                             :keybindings {:start "s" :stop "e"}}]
+                             :keybindings {:start "s" :stop "e"}
+                             :bci-device {:configured false
+                                          :board-type "GANGLION_BOARD"
+                                          :mac-address ""
+                                          :com-port ""
+                                          :connection-method "bled112"}}]
         (spit profile-path (pr-str default-profile))))
     profile-path))
 

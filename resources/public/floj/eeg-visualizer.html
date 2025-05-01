@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>EEG Brain Wave Visualizer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .connection-status {
+            text-align: center;
+            padding: 8px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .status-connected {
+            background-color: #c8e6c9;
+            color: #2e7d32;
+        }
+        .status-disconnected {
+            background-color: #ffcdd2;
+            color: #c62828;
+        }
+        .channel-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            margin: 20px 0;
+        }
+        .channel {
+            width: 48%;
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .channel-label {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .channel-value {
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+        .wave-metrics {
+            display: flex;
+            justify-content: space-around;
+        }
+        .wave-metric {
+            text-align: center;
+        }
+        .wave-metric-label {
+            font-style: italic;
+            color: #666;
+        }
+        .wave-metric-value {
+            font-weight: bold;
+        }
+        .wave-display {
+            text-align: center;
+            padding: 20px;
+            margin: 20px 0;
+            background-color: #3498db;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            border-radius: 8px;
+            transition: background-color 0.5s ease;
+        }
+        .threshold-container {
+            height: 40px;
+            background-color: #f5f5f5;
+            position: relative;
+            border-radius: 4px;
+            margin: 10px 0 20px;
+        }
+        .threshold-line {
+            position: absolute;
+            left: 50%;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background-color: #e74c3c;
+        }
+        .threshold-value {
+            position: absolute;
+            left: 10px;
+            top: 10px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>EEG Brain Wave Visualizer</h1>
+    
+        <div class="connection-status status-disconnected" id="connectionStatus">Disconnected</div>
+        
+        <div id="progressContainer" class="progress-container">
+            <div>Collecting samples: <span id="progressText">0/256</span></div>
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
+            </div>
+        </div>
+        
+
+        <div class="channel-container">
+            <div class="channel">
+                <div class="channel-label">Channel 1</div>
+                <div class="channel-value" id="channel1">0.00</div>
+                <div class="wave-metrics">
+                    <div class="wave-metric">
+                        <div class="wave-metric-label">α</div>
+                        <div class="wave-metric-value" id="alpha1">0.00</div>
+                    </div>
+                    <div class="wave-metric">
+                        <div class="wave-metric-label">β</div>
+                        <div class="wave-metric-value" id="beta1">0.00</div>
+                    </div>
+                </div>
+            </div>
+            <div class="channel">
+                <div class="channel-label">Channel 2</div>
+                <div class="channel-value" id="channel2">0.00</div>
+                <div class="wave-metrics">
+                    <div class="wave-metric">
+                        <div class="wave-metric-label">α</div>
+                        <div class="wave-metric-value" id="alpha2">0.00</div>
+                    </div>
+                    <div class="wave-metric">
+                        <div class="wave-metric-label">β</div>
+                        <div class="wave-metric-value" id="beta2">0.00</div>
+                    </div>
+                </div>
+            </div>
+            <div class="channel">
+                <div class="channel-label">Channel 3</div>
+                <div class="channel-value" id="channel3">0.00</div>
+                <div class="wave-metrics">
+                    <div class="wave-metric">
+                        <div class="wave-metric-label">α</div>
+                        <div class="wave-metric-value" id="alpha3">0.00</div>
+                    </div>
+                    <div class="wave-metric">
+                        <div class="wave-metric-label">β</div>
+                        <div class="wave-metric-value" id="beta3">0.00</div>
+                    </div>
+                </div>
+            </div>
+            <div class="channel">
+                <div class="channel-label">Channel 4</div>
+                <div class="channel-value" id="channel4">0.00</div>
+                <div class="wave-metrics">
+                    <div class="wave-metric">
+                        <div class="wave-metric-label">α</div>
+                        <div class="wave-metric-value" id="alpha4">0.00</div>
+                    </div>
+                    <div class="wave-metric">
+                        <div class="wave-metric-label">β</div>
+                        <div class="wave-metric-value" id="beta4">0.00</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="wave-display" id="waveDisplay">
+            <div class="wave-text" id="waveText">ALPHA</div>
+        </div>
+        
+        <div>
+            <h3>Alpha/Beta Ratio (Threshold at 12-13 Hz)</h3>
+            <div class="threshold-container">
+                <div class="threshold-line"></div>
+                <div class="threshold-value" id="alphaRatio">0.00</div>
+            </div>
+        </div>
+
+        <div class="ratio-display">
+            <div>Alpha/Beta Ratio 2! (Threshold at 12-13 Hz)</div>
+            <div id="alphaRatio">0.00</div>
+            <div class="ratio-bar">
+                <div id="ratioIndicator" class="ratio-indicator" style="left: 50%;"></div>
+            </div>
+        </div>
+
+        <div id="logContainer" class="log-container">
+            <div class="log-entry">Waiting for data...</div>
+        </div>
+    </div>
+
+    <script>
+        const connectionStatus = document.getElementById('connectionStatus');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const waveDisplay = document.getElementById('waveDisplay');
+        const waveText = document.getElementById('waveText');
+        const alphaRatio = document.getElementById('alphaRatio');
+        const ratioIndicator = document.getElementById('ratioIndicator');
+        const logContainer = document.getElementById('logContainer');
+        const channelElements = [
+            document.getElementById('channel1'),
+            document.getElementById('channel2'),
+            document.getElementById('channel3'),
+            document.getElementById('channel4')
+        ];
+        const alphaElements = [
+            document.getElementById('alpha1'),
+            document.getElementById('alpha2'),
+            document.getElementById('alpha3'),
+            document.getElementById('alpha4')
+        ];
+        const betaElements = [
+            document.getElementById('beta1'),
+            document.getElementById('beta2'),
+            document.getElementById('beta3'),
+            document.getElementById('beta4')
+        ];
+        
+        let ws;
+        let isDataFlowing = false;
+        let lastMessageTime = Date.now();
+
+        function addLogEntry(message) {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.textContent = new Date().toISOString().substr(11, 8) + ': ' + message;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            
+            while (logContainer.children.length > 50) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
+        }
+
+        function connectWebSocket() {
+            ws = new WebSocket('ws://localhost:3000');
+            
+            ws.onopen = function() {
+                connectionStatus.textContent = 'Connected';
+                connectionStatus.className = 'connection-status status-connected';
+                console.log('Connected to WebSocket server');
+            };
+            
+            ws.onclose = function() {
+                connectionStatus.textContent = 'Disconnected - Reconnecting...';
+                connectionStatus.className = 'connection-status status-disconnected';
+                console.log('Disconnected from WebSocket server, attempting to reconnect...');
+                
+                setTimeout(connectWebSocket, 2000);
+                lastMessageTime = Date.now();
+                
+                checkConnectionStatus();
+            };
+            
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    console.log("Received message:", event.data);
+                    const data = JSON.parse(event.data);
+
+                    if (data.type === "progress") {
+                        updateProgress(data);
+                        return;
+                    }
+
+                    if (data.type === "connected" || data.type === "ack") {
+                        addLogEntry(`System message: ${data.type}`);
+                        return;
+                    }   
+
+                    if (data && data.channels) {
+                        updateDisplay(data);
+                    } else {
+                        console.log("Received non-EEG data:", data);
+                    }
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                }
+            };
+        }
+        
+        function updateDisplay(data) {
+            console.log("Updating display with:", data);
+
+            if (data.channels && Array.isArray(data.channels)) {
+                for (let i = 0; i < Math.min(data.channels.length, 4); i++) {
+                    const channel = data.channels[i];
+                    
+                    if (channel && typeof channel === 'object') {
+                        const rawValue = channel.rawValue !== undefined ? channel.rawValue : 0;
+                        channelElements[i].textContent = parseFloat(rawValue).toFixed(2);
+                        
+                        if (channel.alpha !== undefined) {
+                            alphaElements[i].textContent = parseFloat(channel.alpha).toFixed(2);
+                        }
+                
+                        if (channel.beta !== undefined) {
+                            betaElements[i].textContent = parseFloat(channel.beta).toFixed(2);
+                        }
+                    } else if (channel !== undefined) {
+                        channelElements[i].textContent = parseFloat(channel).toFixed(2);
+                    }
+                }
+            }
+
+            if (data.dominant_wave) {
+                waveText.textContent = data.dominant_wave;
+
+                if (data.dominant_wave === 'ALPHA') {
+                    waveDisplay.style.backgroundColor = '#3498db';
+                } else if (data.dominant_wave === 'BETA') {
+                    waveDisplay.style.backgroundColor = '#2ecc71';
+                } else if (data.dominant_wave === 'GAMMA') {
+                    waveDisplay.style.backgroundColor = '#800080';
+                } else if (data.dominant_wave === 'DELTA') {
+                    waveDisplay.style.backgroundColor = '#e74c3c';
+                } else if (data.dominant_wave === 'THETA') {
+                    waveDisplay.style.backgroundColor = '#f39c12';
+                } else if (data.dominant_wave === 'UNKNOWN') {
+                    waveDisplay.style.backgroundColor = '#808080';
+                }
+            }
+            
+            if (data.alpha_beta_ratio !== undefined) {
+                const ratio = parseFloat(data.alpha_beta_ratio);
+                alphaRatio.textContent = ratio.toFixed(2);
+                
+                const position = Math.min(Math.max(ratio / 2, 0), 1) * 100;
+                ratioIndicator.style.left = `${position}%`;
+            }
+        }
+
+        function updateProgress(data) {
+            progressContainer.style.display = 'block';
+            progressText.textContent = `${data.count}/${data.target}`;
+            progressFill.style.width = `${data.percentage}%`;
+            addLogEntry(`Sample progress: ${data.count}/${data.target} (${data.percentage}%)`);
+        }
+        
+
+        function checkConnectionStatus() {
+            const currentTime = Date.now();
+            if (currentTime - lastMessageTime > 5000) {
+                addLogEntry('No data received for 5 seconds');
+                if (ws.readyState !== WebSocket.OPEN) {
+                    addLogEntry('Connection appears to be lost, reconnecting...');
+                    if (ws) ws.close();
+                    connectWebSocket();
+                }
+            }
+            
+            setTimeout(checkConnectionStatus, 5000);
+        }
+
+        connectWebSocket();
+    </script>
+</body>
+</html>

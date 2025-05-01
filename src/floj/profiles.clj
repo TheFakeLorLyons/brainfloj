@@ -20,14 +20,8 @@
 
 (defn create-profile!
   "Create a new profile with optional config overrides"
-  [name & {:keys [sampling-rate eeg-channels keybindings]
-           :or {sampling-rate 250
-                eeg-channels ["O1" "O2" "C3" "C4"]
-                keybindings {:start "s" :stop "e"}}}]
-  (let [data {:name name
-              :sampling-rate sampling-rate
-              :channels {:eeg eeg-channels}
-              :keybindings keybindings}]
+  [name]
+  (let [data {:name name}]
     (spit (profile-path name) (pr-str data))
     (println "Created profile:" name)))
 
@@ -48,6 +42,12 @@
           (set-default-profile! profile-name)
           (println "Switched to profile:" profile-name))
         (println "Profile not found.")))))
+
+(defn load-profile! [name]
+  (let [path (str (System/getProperty "user.home") "/profiles/" name ".edn")]
+    (if (.exists (io/file path))
+      (edn/read-string (slurp path))
+      (throw (ex-info "Profile not found" {:path path})))))
 
 (defn delete-profile! []
   (let [profiles (list-profiles)]

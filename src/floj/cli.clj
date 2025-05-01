@@ -1,5 +1,6 @@
 (ns floj.cli
-  (:require [floj.brainflow :as brainflow]
+  (:require [floj.bluetooth :as bluetooth]
+            [floj.api :as api]
             [floj.io :as fio]
             [floj.keybindings :as kb]
             [floj.lor :as lor]
@@ -10,22 +11,24 @@
   (:gen-class))
 
 (defn initialize-modules! []
-  (brainflow/initialize-brainflow!)
+  (api/initialize-brainflow!)
   (fio/initialize-io!)
   (lor/initialize-lor!)
   (kb/initialize-keybindings!)
   (profiles/initialize-profiles!)
+  #_(bluetooth/initialize-bluetooth-module!)
   (record/initialize-record!))
 
 (defn initialize-application! [args]
   (fio/application-setup!)           ;creates/loads configurations and profiles
   (initialize-modules!)              ;intializes the application state
-  (brainflow/determine-board args))  ;get boardType
+  (api/determine-board args))        ;get boardType
 
 (defn cli-program [board-shim]
   (let [active-profile ((:get-active-profile @state/state))]
     (println "You are logged in as:" (:name active-profile))
-    (kb/load-profile-keymap!))
+    (kb/load-profile-keymap!)
+    (api/connect-to-default-device active-profile))
 
   (kb/display-help)
 

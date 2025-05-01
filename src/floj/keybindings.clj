@@ -1,7 +1,7 @@
 (ns floj.keybindings
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [floj.brainflow :as brainflow]
+            [floj.api :as api]
             [floj.io :as fio]
             [floj.lor :as lor]
             [floj.profiles :as profiles]
@@ -164,15 +164,18 @@
            (let [bindings (get-key-bindings)]
              (doseq [[key cmd] (sort-by first bindings)]
                (println (str key " - " cmd)))))
-   
-   #_#_:bluetooth-connection! (nil)
+
+   :bluetooth-connection! (fn [_]                                        
+                            (if-let [f (:bluetooth-connection! @state/state)]
+                              (f nil)
+                              (println "Bluetooth connection function not registered")))
 
    :connect! (fn [_]
                (println "Enter the board MAC address:")
                (let [mac-address (read-line)
                      _ (println "Enter the COM port for the board's BLE dongle (e.g., COM3):")
                      serial-port (read-line)]
-                 (brainflow/connect! mac-address serial-port)))
+                 (api/connect! mac-address serial-port)))
 
    :create-profile   (fn [_]
                        (print "Enter new profile name: ")
@@ -222,7 +225,7 @@
 
    :get-board-info (fn [_]
                      (try
-                       (let [info (brainflow/get-board-info)
+                       (let [info (api/get-board-info)
                              board-id (:board-id info)
                              board-type (:board-type info)
                              channels (:eeg-channels info)
@@ -293,9 +296,8 @@
                       (lor/display-recordings))
 
    :read-lor        (fn [_]
-                        (lor/display-recordings)
-                        (when-let [selected-lor (lor/select-recording)]
-                          (lor/read-lor! selected-lor)))
+                      (when-let [selected-lor (lor/select-recording)]
+                        (lor/read-lor! selected-lor)))
 
    :switch-board!  (fn [_]
                      (if @state/recording?

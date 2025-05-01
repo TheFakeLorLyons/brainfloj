@@ -1,12 +1,13 @@
 (ns floj.lor
-  (:require [floj.io :as fio]
+  (:require [floj.brainflow.boardids :as id]
+            [floj.io :as fio]
             [floj.state :as state]
             [clojure.java.io :as io]
             [clojure.edn :as edn]
             [clojure.pprint :refer [pprint]]
             [cognitect.transit :as transit]
             [clojure.string :as str]
-            [floj.brainflow :as brainflow])
+            [floj.api :as brainflow])
   (:import [java.text SimpleDateFormat]
            [java.util Date]))
 
@@ -133,7 +134,7 @@
                       :start-time (System/currentTimeMillis)
                       :board-id board-id
                       :sampling-rate sampling-rate
-                      :device-type (brainflow/board-types board-id)
+                      :device-type (id/board-types board-id)
                       :recorded-at (java.util.Date.)
                       :channel-count (count eeg-channels)
                       :version "1.0"}
@@ -142,7 +143,7 @@
         (try
           (doseq [idx (range (count eeg-channels))]
             (let [channel-idx (nth eeg-channels idx)
-                  raw-channel-data (map #(get % (+ idx 1)) data);offset by 1 because channel 0 is sample rate
+                  raw-channel-data (map #(get % (+ idx 1)) data);offset by 1 because channel 0 is sample
                   channel-data (map (fn [item]
                                       (cond
                                         (number? item) item
@@ -169,22 +170,66 @@
 
 (defn read-lor-channel-file
   "Read a single .lor channel file, parsing the header and binary data (doubles)"
-  [file-path]
+  [file-path print-header?]
+  (when print-header?
+    (println "Reading file at path:" file-path))
   (with-open [in (java.io.DataInputStream. (java.io.FileInputStream. file-path))]
     (let [header-len (.readInt in)
           header-bytes (byte-array header-len)]
       (.readFully in header-bytes)
-      (let [header-str (String. header-bytes "UTF-8")
-            header (edn/read-string header-str)
-            remaining-bytes (- (:header-size header) (+ 4 header-len))]
-        (dotimes [_ remaining-bytes]
-          (.readByte in))
-        (let [data (loop [values []]
-                     (if (>= (count values) (:data-points header))
-                       values
-                       (let [value (.readDouble in)]
-                         (recur (conj values value)))))]
-          (assoc header :data data :header header))))))
+      (let [header-str (String. header-bytes "UTF-8")]
+        (when print-header?
+          (println "Header string: " header-str))
+        (let [header (edn/read-string header-str)
+              remaining-bytes (- (:header-size header) (+ 4 header-len))]
+          (when print-header?
+            (println "Remaining bytes to skip: " remaining-bytes))
+          (dotimes [_ remaining-bytes]
+            (.readByte in)) 
+          (let [data (loop [values []]
+                       (if (>= (count values) (:data-points header))
+                         values
+                         (let [value (.readDouble in)]
+                           (recur (conj values value)))))]
+            (assoc header :data data :header header)))))))
+
+(defn print-tabular-lor-data
+  "Print .lor data in a tabular format with all channels side by side"
+  [channels]
+  (when-let [first-channel (first channels)]
+    (println "=== Recording Information ===")
+    (println "Sampling Rate:" (:sampling-rate first-channel) "Hz")
+    (println "Data Points:" (:data-points first-channel))
+    (println "Format:" (:format first-channel))
+    (println "Total Channels:" (count channels))
+    (println)
+
+    (print "Time (s)")
+    (doseq [channel channels]
+      (print (format " | %10s" (:name channel))))
+    (println)
+
+    (print "---------")
+    (dotimes [_ (count channels)]
+      (print "------------"))
+    (println)
+    (let [sampling-rate (:sampling-rate first-channel)
+          time-interval (/ 1.0 sampling-rate)
+          data-points (:data-points first-channel)
+          channel-data-arrays (mapv :data channels)]
+
+      (dotimes [i data-points]
+        (when (and (> i 0) (zero? (mod i sampling-rate)))
+          (println)
+          (println (format "------------- %d second(s) -------------" (/ i sampling-rate)))
+          (println))
+
+        (print (format "%8.3f" (* i time-interval)))
+        (doseq [data-array channel-data-arrays]
+          (if (< i (count data-array))
+            (print (format " | %10.4f" (get data-array i)))
+            (print " | ----------")))
+        (println)))))
 
 (defn read-lor!
   "Read a complete lorfile directory"
@@ -196,8 +241,12 @@
         channel-files (->> (io/file recordings-dir)
                         (.listFiles)
                         (filter #(.endsWith (.getName %) ".lor"))
+                        (sort #(compare (.getName %1) (.getName %2)))
                         (mapv #(.getPath %)))
-        channels (mapv read-lor-channel-file channel-files)]
+        channels (mapv #(read-lor-channel-file %1 (= %2 0))
+                   channel-files
+                   (range (count channel-files)))]
+    (print-tabular-lor-data channels)
     {:metadata metadata
      :tags tags
      :channels channels}))
@@ -271,7 +320,7 @@
       (println "\nNo recordings found in" dir-path))))
 
 (defn select-recording
-  "Interactive function to select a lorfile"
+  "Interactive function to select a LOR file"
   []
    (let [files (list-recordings)]
      (if (seq files)
