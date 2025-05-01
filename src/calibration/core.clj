@@ -32,31 +32,44 @@
       (try
         (let [data @state/shim
               data-point (shim/get-board-data data)]
+
           (when (seq data-point)
             (swap! state/eeg-data conj data-point)
 
-            (let [channels (range 4)
-                  channel-data (mapv #(let [val (get data-point (inc %))]
-                                        (if (number? val) val 0.0))
-                                 channels)]
-              (swap! eeg-buffer conj channel-data)
-              (swap! sample-count inc)
+            ;; Based on the output, position 1 contains EEG values
+            ;; Let's extract data from there if it exists
+            (if (and (>= (count data-point) 2)
+                  (vector? (nth data-point 1))
+                  (seq (nth data-point 1)))
+              (let [eeg-data (nth data-point 1)
+                    ;; Take first 4 values or pad with zeros if fewer than 4
+                    channel-data (vec (take 4 (concat eeg-data (repeat 0.0))))]
 
-              (when (zero? (mod @sample-count 10))
-                (update-progress!))
+                ;; Log some debugging info occasionally
+                (when (zero? (mod @sample-count 25))
+                  (println "Extracted EEG data:" (pr-str (take 4 eeg-data))))
 
-              (when (>= (count @eeg-buffer) window-size)
-                (let [analysis-window (take-last window-size @eeg-buffer)
-                      sampling-rate 200
-                      transposed-data (apply map vector analysis-window)
-                      analysis-result (fft/analyze-eeg-buffer transposed-data window-size sampling-rate)
-                      ws-data (assoc analysis-result :timestamp (System/currentTimeMillis))]
-                  (println "Processed" @sample-count "samples. Sending analysis:")
-                  (println (pr-str (update ws-data :channels #(take 2 %))))
-                  (ws/feed-eeg-data! ws-data)
+                (swap! eeg-buffer conj channel-data)
+                (swap! sample-count inc)
+                (when (zero? (mod @sample-count 10))
+                  (update-progress!))
 
-                  (when (> (count @eeg-buffer) (* 2 window-size))
-                    (reset! eeg-buffer (take-last window-size @eeg-buffer))))))))
+                (when (>= (count @eeg-buffer) window-size)
+                  (let [analysis-window (take-last window-size @eeg-buffer)
+                        sampling-rate 256
+                        transposed-data (apply map vector analysis-window)
+                        analysis-result (fft/analyze-eeg-buffer transposed-data window-size sampling-rate)
+                        ws-data (assoc analysis-result :timestamp (System/currentTimeMillis))]
+                    (println "Processed" @sample-count "samples. Sending analysis:")
+                    (println (pr-str (update ws-data :channels #(take 2 %))))
+                    (ws/feed-eeg-data! ws-data)
+                    (when (> (count @eeg-buffer) (* 2 window-size))
+                      (reset! eeg-buffer (take-last window-size @eeg-buffer))))))
+
+              ;; If we don't have data at position 1, log the issue
+              (when (zero? (mod @sample-count 25))
+                (println "Warning: No EEG data found at expected position in data point")
+                (println "Data point structure:" (pr-str data-point))))))
         (catch Exception e
           (println "Error in recording loop:" (.getMessage e))
           (.printStackTrace e)))

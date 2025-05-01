@@ -12,26 +12,19 @@
 
 (defn perform-fft [time-series sampling-rate]
   (try
-    (let [;; Filter non-numeric values
-          filtered-series (filterv number? time-series)
+    (let [filtered-series (filterv number? time-series)
           n (count filtered-series)
 
-          ;; Check if we have enough data
           _ (when (< n 2)
               (throw (Exception. "Not enough numeric data for FFT")))
 
-          ;; Calculate padded size (nearest power of 2)
           padded-n (int (Math/pow 2 (Math/ceil (/ (Math/log n) (Math/log 2)))))
-
-          ;; Pad the series
           padded-series (concat filtered-series (repeat (- padded-n n) 0.0))
 
-          ;; Perform FFT
           fft (FastFourierTransformer. DftNormalization/STANDARD)
           complex-array (into-array Complex (map #(Complex. (double %) 0.0) padded-series))
           result (.transform fft complex-array TransformType/FORWARD)
 
-          ;; Extract magnitudes and frequencies
           magnitudes (map #(.abs %) result)
           frequencies (map #(* % (/ sampling-rate padded-n)) (range (/ padded-n 2)))]
 
@@ -104,11 +97,9 @@
           dominant-wave-name (-> result :overall-dominant-wave name str/upper-case)
           channel-results (:channel-results result)
 
-          ;; Ensure we have 4 channels (add empty ones if needed)
           padded-results (take 4 (concat channel-results
                                    (repeat {:band-powers {:alpha 0.0, :beta 0.0}})))
 
-          ;; Create properly formatted channel data for UI
           channel-data (map-indexed
                          (fn [idx channel-result]
                            {:channel (inc idx)
@@ -118,7 +109,6 @@
                                                 (get-in channel-result [:band-powers :beta] 0.0)))})
                          padded-results)
 
-          ;; Calculate alpha/beta ratio
           alpha-sum (apply + (map :alpha channel-data))
           beta-sum (apply + (map :beta channel-data))
           ratio (if (and (> beta-sum 0.0) (> alpha-sum 0.0))
@@ -137,11 +127,9 @@
                   {:channel 4 :alpha 0.0 :beta 0.0 :rawValue 0.0}]
        :alpha_beta_ratio 0.0})))
 
-;; Function to analyze EEG buffer
 (defn analyze-eeg-buffer [eeg-buffer window-size sampling-rate]
   (try
     (if (< (count eeg-buffer) 2)
-      ;; Return empty placeholder data if not enough samples
       {:dominant_wave "WAITING"
        :channels [{:channel 1 :alpha 0.0 :beta 0.0 :rawValue 0.0}
                   {:channel 2 :alpha 0.0 :beta 0.0 :rawValue 0.0}
@@ -149,7 +137,6 @@
                   {:channel 4 :alpha 0.0 :beta 0.0 :rawValue 0.0}]
        :alpha_beta_ratio 0.0}
 
-      ;; Process actual data
       (let [window (if (> (count eeg-buffer) window-size)
                      (take-last window-size eeg-buffer)
                      eeg-buffer)]
@@ -163,3 +150,37 @@
                   {:channel 3 :alpha 0.0 :beta 0.0 :rawValue 0.0}
                   {:channel 4 :alpha 0.0 :beta 0.0 :rawValue 0.0}]
        :alpha_beta_ratio 0.0})))
+
+(defn test-fft []
+  (println "Testing FFT functionality with synthetic data...")
+
+  ;; Create synthetic alpha wave (10 Hz) in first channel
+  ;; Create synthetic beta wave (20 Hz) in second channel
+  ;; Create mixed signals in channels 3 and 4
+  (let [sampling-rate 200
+        window-size 256
+        time-points (map #(/ % sampling-rate) (range window-size))
+
+        ;; Generate synthetic waves
+        alpha-wave (mapv #(Math/sin (* 2 Math/PI 10 %)) time-points)
+        beta-wave (mapv #(Math/sin (* 2 Math/PI 20 %)) time-points)
+        mixed-wave1 (mapv #(+ (* 0.7 (Math/sin (* 2 Math/PI 10 %)))
+                             (* 0.3 (Math/sin (* 2 Math/PI 20 %))))
+                      time-points)
+        mixed-wave2 (mapv #(+ (* 0.3 (Math/sin (* 2 Math/PI 10 %)))
+                             (* 0.7 (Math/sin (* 2 Math/PI 20 %))))
+                      time-points)
+
+        ;; Create test data structure (4 channels)
+        test-data [alpha-wave beta-wave mixed-wave1 mixed-wave2]
+
+        ;; Run analysis
+        result (analyze-eeg-buffer test-data window-size sampling-rate)]
+
+    (println "FFT Analysis Result:")
+    (println "Dominant wave:" (:dominant_wave result))
+    (println "Alpha/Beta ratio:" (:alpha_beta_ratio result))
+    (println "Channel data:" (:channels result))
+
+    ;; The first channel should have strong alpha, second should have strong beta
+    result))
