@@ -1,10 +1,10 @@
-(ns calibration.websocket
-  (:require [org.httpkit.server :as server]
-            [clojure.java.io :as io]
+(ns visualizer.websocket
+  (:require [clojure.java.io :as io]
             [clojure.data.json :as json]
             [clojure.core.async :as async]
             [floj.record :as record]
-            [floj.state :as state]))
+            [floj.state :as state]
+            [org.httpkit.server :as server]))
 
 (def clients (atom {}))
 (def broadcast-channel (async/chan (async/sliding-buffer 10)))
@@ -19,7 +19,6 @@
     (swap! clients assoc client-id {:channel channel
                                     :connected-at (System/currentTimeMillis)
                                     :last-activity (System/currentTimeMillis)})
-    #_(println "Client connected:" client-id)
     (swap! connection-status assoc :connected true :reconnect-attempts 0)
     client-id))
 
@@ -105,11 +104,6 @@
     (catch Exception e
       (println "Error feeding EEG data:" (.getMessage e)))))
 
-(defn app-routes [req]
-  (case (:uri req)
-    "/ws" (ws-handler req)
-    {:status 404 :body "Not found"}))
-
 (defn init! [port]
   (start-ws-server! port)
   (start-broadcast-process!)
@@ -125,4 +119,18 @@
         tags @state/tags
         board-id (.get_board_id @state/shim)
         saved-dir ((:write-lor! @state/state) data tags "calibration-session" board-id)]
-    (println "Session saved to:" saved-dir)))
+    (println "Session saved to:" saved-dir))) 
+
+#_(defn extend-stop-and-save!
+  "Extension to websocket stop-and-save to update refraction calibration"
+  [is-baseline?]
+  (let [saved-dir (stop-and-save!)
+        current-profile-name (get-in (:get-active-profile @state/state) [:name])]
+    (when (and saved-dir current-profile-name)
+      (if is-baseline?
+          ;; If this is a baseline recording, initialize the baseline tensor
+        (initialize-baseline! current-profile-name saved-dir 1024)
+          ;; Otherwise add as a refraction mirror
+        (add-refraction-mirror! current-profile-name saved-dir))
+      (println "Updated wave refraction calibration for" current-profile-name))
+    saved-dir))

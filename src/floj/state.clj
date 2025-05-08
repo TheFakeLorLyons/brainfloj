@@ -19,10 +19,9 @@
 (defn redirect-system-output! []
   (let [log-file (str (System/getProperty "user.home") "/.lor/logs/app_logs/sys-out.log")
         log-stream (java.io.PrintStream. (java.io.FileOutputStream. log-file false))]
+    (configure-brainflow-logging!)
     (System/setOut log-stream)
     (System/setErr log-stream)))
-
-(redirect-system-output!)
 
 (def dev-params (doto (BrainFlowInputParams.)
                   (.set_serial_port "COM7")
@@ -38,7 +37,13 @@
 
 (def shim (atom (BoardShim. board-id params)))
 (def simpleble (atom nil))
-(defonce board-id-atom (atom nil))
+(defonce golden-tensor (atom nil))
+(defonce recording-context (atom nil))
+
+(defonce calibration-state (atom {:is-calibrating false
+                                  :current-stage nil
+                                  :stages-completed 0
+                                  :total-stages 3}))
 
 (defonce state (atom {:create-default-config! nil
                       :get-default-command-map! nil
@@ -63,15 +68,6 @@
 
 (defn register-fn! [key f]
   (swap! state assoc key f))
-
-(defstate config
-  :start (try
-           ((:load-configurations! @state))
-           (catch Exception e
-             (println "Failed to load config:" (.getMessage e))
-             ((:create-default-config! @state))
-             ((:load-configurations! @state))))
-  :stop nil)
 
 (defstate active-keymap
   :start (let [home (System/getProperty "user.home")
@@ -105,31 +101,3 @@
 (defstate current-session-name
   :start (atom "recording")
   :stop (reset! current-session-name "recording"))
-
-(defstate board-manager
-  :start (do
-           (configure-brainflow-logging!)
-           (let [default-board-id BoardIds/SYNTHETIC_BOARD
-                 default-params (doto (BrainFlowInputParams.)
-                                  (.set_serial_port "COM1")
-                                  (.set_mac_address "00:11:22:33:44:55"))]
-             (try
-               (let [new-board (BoardShim. default-board-id default-params)]
-                 (.prepare_session new-board)
-                 (reset! shim new-board)
-                 (println "Initialized default synthetic board")
-                 new-board)
-               (catch Exception e
-                 (println "Failed to initialize default board:" (.getMessage e))
-                 nil))))
-  :stop (do
-          (println "Stopping board manager")
-          (when-let [board @shim]
-            (try
-              (when @recording?
-                (.stop_stream board)
-                (reset! recording? false))
-              (.release_session board)
-              (reset! shim nil)
-              (catch Exception e
-                (println "Error releasing board:" (.getMessage e)))))))

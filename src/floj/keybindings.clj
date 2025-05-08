@@ -2,10 +2,12 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [floj.api :as api]
+            [floj.brainflow.board-shim :as brainflow]
             [floj.io :as fio]
             [floj.lor :as lor]
             [floj.profiles :as profiles]
-            [floj.state :as state])
+            [floj.state :as state]
+            [floj.wave-refraction :as refraction])
   (:import [brainflow BoardIds]))
 
 (def default-command-map
@@ -53,6 +55,16 @@
        :description "List available eeg recordings"}
    :R {:command :read-lor
        :description "Parse and display an available lorfile"}
+   :C {:command :calibrate!
+       :description "Begin calibration routine (30s)"}
+   := {:command :cursor-test
+       :description "Start cursor control test window"}
+   :0 {:command :calibrate-cursor
+       :description "Calibrate cursor control"}
+   :> {:command :start-cursor
+       :description "Start cursor control"}
+   :. {:command :stop-cursor
+       :description "Stop cursor control"}
    :q {:command :quit
        :description "Quit the application"}})
 
@@ -165,7 +177,7 @@
              (doseq [[key cmd] (sort-by first bindings)]
                (println (str key " - " cmd)))))
 
-   :bluetooth-connection! (fn [_]                                        
+   :bluetooth-connection! (fn [_]
                             (if-let [f (:bluetooth-connection! @state/state)]
                               (f nil)
                               (println "Bluetooth connection function not registered")))
@@ -216,7 +228,7 @@
                       (println "Signal quality check:")
                       (doseq [stat signal-stats]
                         (println (format "Channel %d: Mean: %.2f, StdDev: %.2f, Quality: %s"
-                                   (:channel stat) (:mean stat) (:stdev stat) (:quality stat))))
+                                         (:channel stat) (:mean stat) (:stdev stat) (:quality stat))))
                       (when (seq flat-channels)
                         (println "Warning: These channels appear flat:" (map :channel flat-channels)))
                       (when (seq noisy-channels)
@@ -263,37 +275,28 @@
                          (reset! state/current-session-name name)
                          (println "Session name set to:" name)))
 
-   :quit (fn [_]
-           (if @state/recording?
-             (println "Please stop recording first with '"
-               (key-for-command :stop-recording) "'")
-             (do
-               (println "Releasing session and quitting...")
-               (when-let [f (:release-board! state/state)]
-                 (f @state/shim))
-               (System/exit 0))))
-
    :recording-status (fn [_]
                        (println "Recording status:")
                        (println "- Recording active:" @state/recording?)
                        (println "- Session name:" @state/current-session-name)
                        (println "- Data points collected:" (count (or @state/eeg-data [])))
+                       #_(println  (str "current data: " @state/eeg-data));fills the screen with collected data
                        (println "- Tags added:" (count (or @state/tags [])))
-                       (let [get-active-profile-fn (:get-active-profile @state/state)]
-                         (if get-active-profile-fn
-                           (println "- Active profile:" (get-active-profile-fn))
+                       (let [active-profile-name (or (:name (profiles/get-active-profile)) "[Not available]")]
+                         (if active-profile-name
+                           (println "- Active profile:" active-profile-name)
                            (println "- Active profile: [Not available]")))
                        (when (and @state/recording?
-                               (seq @state/tags))
+                                  (seq @state/tags))
                          (let [duration-ms (- (System/currentTimeMillis)
-                                             (:timestamp (first @state/tags)))
+                                              (:timestamp (first @state/tags)))
                                duration-sec (/ duration-ms 1000.0)]
                            (println "- Recording duration:" (format "%.1f seconds" duration-sec)))))
    :start-recording (create-recording-function :start-recording!)
    :stop-recording  (create-recording-function :stop-recording!)
 
    :list-lorfiles   (fn [_]
-                      (lor/display-recordings))
+                      (lor/display-recordings (lor/list-recordings)))
 
    :read-lor        (fn [_]
                       (when-let [selected-lor (lor/select-recording)]
@@ -320,11 +323,39 @@
                                profile-name (:name active-profile)
                                updated-profile (assoc active-profile :board-id board-id)
                                profile-path (str (System/getProperty "user.home")
-                                              "/.lor/profiles/" profile-name ".edn")]
+                                                 "/.lor/profiles/" profile-name ".edn")]
 
                            (spit profile-path (pr-str updated-profile))
                            (println "Board type updated. Please restart the application.")
                            (System/exit 0)))))
+
+   :calibrate! (fn [_]
+                 (refraction/calibrate!))
+
+   :cursor-test (fn [board-shim]
+                  (if board-shim
+                    ((:start-cursor-test! @state/state) (brainflow/get-board-id @board-shim))
+                    (println "No board connected. Please connect to a board first.")))
+   :calibrate-cursor (fn [board-shim]
+                       (if board-shim
+                         ((:calibrate-cursor! @state/state) board-shim 5)
+                         (println "No board connected. Please connect to a board first.")))
+   :start-cursor (fn [board-shim]
+                   (if board-shim
+                     ((:start-cursor-control! @state/state) board-shim)
+                     (println "No board connected. Please connect to a board first.")))
+   :stop-cursor (fn [_]
+                  ((:stop-cursor-control! @state/state)))
+
+   :quit (fn [_]
+           (if @state/recording?
+             (println "Please stop recording first with '"
+                      (key-for-command :stop-recording) "'")
+             (do
+               (println "Releasing session and quitting...")
+               (when-let [f (:release-board! state/state)]
+                 (f @state/shim))
+               (System/exit 0))))
 
    :else (println "Unknown command")})
 

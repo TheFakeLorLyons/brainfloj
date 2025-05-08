@@ -1,16 +1,16 @@
-(ns calibration.core
-  (:require [floj.api :as api]
-            [floj.brainflow.boardshim :as shim]
+(ns visualizer.core
+  (:require [clojure.java.io :as io]
+            [clojure.java.browse :as browse]
+            [floj.api :as api]
+            [floj.brainflow.board-shim :as shim]
+            [floj.cli :as cli]
             [floj.keybindings :as kb]
+            [floj.frequency-analysis :as fft]
             [floj.record :as record]
             [floj.profiles :as profiles]
             [floj.state :as state]
-            [calibration.websocket :as ws]
-            [calibration.frequency-analysis :as fft]
-            [clojure.java.io :as io]
-            [clojure.java.browse :as browse]
             [mount.core :as mount]
-            [floj.cli :as cli]))
+            [visualizer.websocket :as ws]))
 
 (def eeg-buffer (atom []))
 (def window-size 256)
@@ -39,8 +39,8 @@
             ;; Based on the output, position 1 contains EEG values
             ;; Let's extract data from there if it exists
             (if (and (>= (count data-point) 2)
-                  (vector? (nth data-point 1))
-                  (seq (nth data-point 1)))
+                     (vector? (nth data-point 1))
+                     (seq (nth data-point 1)))
               (let [eeg-data (nth data-point 1)
                     ;; Take first 4 values or pad with zeros if fewer than 4
                     channel-data (vec (take 4 (concat eeg-data (repeat 0.0))))]
@@ -76,11 +76,11 @@
       (Thread/sleep interval-ms))
     (println "Recording stopped")))
 
-
-(defn init-system! []
+(defn init-system! [profile-name]
   (ws/init! 3000)
   (cli/initialize-modules!)
   (mount.core/start)
+  #_(cli/check-and-load-calibration! profile-name)
   (let [html-file (io/file "resources/public/floj/eeg-visualizer.html")]
     (println "Created visualization interface at:" (.getAbsolutePath html-file))
 
@@ -91,11 +91,56 @@
   (if-let [profile-name (first args)]
     (do
       (println "Using profile:" profile-name)
-      (init-system!)
+      (init-system! profile-name)
       (api/connect-from-profile! (profiles/get-active-profile))
       (kb/create-recording-function :start-recording!)
       (record/start-recording!)
       (record-loop! 250))
     (println "Please provide a profile name (e.g., Lor)")))
+#_(defn calibration-exists? [profile]
+  (let [calib-file (io/file (profiles/profile-path profile))]
+    (.exists calib-file)))
+#_(defn run-calibration! [profile]
+  (println "Starting calibration for profile:" (:name profile))
+  (doseq [{:keys [label duration-ms instruction]} calibration-script]
+    (ws/feed-eeg-data! {:type "calibration-stage" :label label :instruction instruction})
+    (println "Instruction:" instruction)
+
+    ;; Optional: Play audio or render UI element here
+
+    (reset! state/eeg-data [])
+    (reset! state/tags [])
+    (record/start-recording!)
+    (record-loop! 250)
+
+    ;; Sleep for actual recording
+    (Thread/sleep duration-ms)
+
+    (record/stop-recording!)
+
+    ;; Save segment with label
+    ;; You could tag it or store it in memory — up to you
+
+    ;; Wait 10 seconds before next stage
+    (println "Break before next stage...")
+    (Thread/sleep 10000)))
+#_(defn -main [& args]
+  (println "Starting EEG application...")
+  (if-let [profile-name (first args)]
+    (do
+      (println "Using profile:" profile-name)
+      (init-system!)
+      (let [profile (profiles/get-active-profile)]
+        (api/connect-from-profile! profile)
+
+        (when (needs-calibration? profile) ;; or (not (calibration-exists? profile))
+          (run-calibration! profile))
+
+        ;; After calibration done
+        (kb/create-recording-function :start-recording!)
+        (record/start-recording!)
+        (record-loop! 250)))
+    (println "Please provide a profile name (e.g., Lor)")))
+
 
 #_(-main "Lor")

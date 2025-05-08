@@ -88,9 +88,28 @@
       (catch Exception e
         (println "Failed to load profile, using default")
         {:name "default"
-         :sampling-rate 250
-         :channels {:eeg ["Unknown"]}
-         :keybindings {:start "s" :stop "e"}}))))
+         :bci-device {}
+         :golden-tensor {}}))))
+
+(defn get-calibration-tensor
+  "Retrieve the golden tensor for the given profile"
+  [profile-name]
+  (let [profile-path (profile-path profile-name)
+        profile (when (.exists (io/file profile-path))
+                  (edn/read-string (slurp profile-path)))]
+    (:golden-tensor profile)))
+
+(defn profile-calibrated?
+  "Check if a profile has calibration data"
+  [profile-name]
+  (boolean (:golden-tensor (get-active-profile))))
+
+(defn is-profile-calibrated?
+  "Check if a profile has been calibrated"
+  [profile-name]
+  (let [check-fn (:check-calibration @state/state)]
+    (when check-fn
+      (check-fn profile-name))));redundant
 
 (defn show-current-profile []
   (let [active-profile (get-active-profile)]
