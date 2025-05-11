@@ -6,5 +6,5 @@ js
 .nrepl-port
 .shadow-cljs
 node_modules
-native/*
+lib/native/*
 !native/compiled-libs.tar

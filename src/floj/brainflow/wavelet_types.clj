@@ -1,0 +1,49 @@
+(ns floj.brainflow.wavelet-types
+  (:import [brainflow WaveletTypes]))
+
+(def wavelet-types
+  {:haar WaveletTypes/HAAR
+   :db1 WaveletTypes/DB1
+   :db2 WaveletTypes/DB2
+   :db3 WaveletTypes/DB3
+   :db4 WaveletTypes/DB4
+   :db5 WaveletTypes/DB5
+   :db6 WaveletTypes/DB6
+   :db7 WaveletTypes/DB7
+   :db8 WaveletTypes/DB8
+   :db9 WaveletTypes/DB9
+   :db10 WaveletTypes/DB10
+   :db11 WaveletTypes/DB11
+   :db12 WaveletTypes/DB12
+   :db13 WaveletTypes/DB13
+   :db14 WaveletTypes/DB14
+   :db15 WaveletTypes/DB15
+   :bior1-1 WaveletTypes/BIOR1_1
+   :bior1-3 WaveletTypes/BIOR1_3
+   :bior1-5 WaveletTypes/BIOR1_5
+   :bior2-2 WaveletTypes/BIOR2_2
+   :bior2-4 WaveletTypes/BIOR2_4
+   :bior2-6 WaveletTypes/BIOR2_6
+   :bior2-8 WaveletTypes/BIOR2_8
+   :bior3-1 WaveletTypes/BIOR3_1
+   :bior3-3 WaveletTypes/BIOR3_3
+   :bior3-5 WaveletTypes/BIOR3_5
+   :bior3-7 WaveletTypes/BIOR3_7
+   :bior3-9 WaveletTypes/BIOR3_9
+   :bior4-4 WaveletTypes/BIOR4_4
+   :bior5-5 WaveletTypes/BIOR5_5
+   :bior6-8 WaveletTypes/BIOR6_8
+   :coif1 WaveletTypes/COIF1
+   :coif2 WaveletTypes/COIF2
+   :coif3 WaveletTypes/COIF3
+   :coif4 WaveletTypes/COIF4
+   :coif5 WaveletTypes/COIF5
+   :sym2 WaveletTypes/SYM2
+   :sym3 WaveletTypes/SYM3
+   :sym4 WaveletTypes/SYM4
+   :sym5 WaveletTypes/SYM5
+   :sym6 WaveletTypes/SYM6
+   :sym7 WaveletTypes/SYM7
+   :sym8 WaveletTypes/SYM8
+   :sym9 WaveletTypes/SYM9
+   :sym10 WaveletTypes/SYM10})

@@ -3,7 +3,7 @@
   (:import [brainflow BoardShim BrainFlowPresets]))
 
 (def log-levels {:trace 0 :debug 1 :info 2 :warn 3 :error 4 :off 5})
-(def brain-flow-presets {:default BrainFlowPresets/DEFAULT_PRESET
+(def brainflow-presets {:default BrainFlowPresets/DEFAULT_PRESET
                          :auxiliary BrainFlowPresets/AUXILIARY_PRESET
                          :ancillary BrainFlowPresets/ANCILLARY_PRESET})
 
@@ -135,7 +135,6 @@
 ;                                          ;          Board Information      ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Version information
 (defn get-version
   "Get BrainFlow BoardController version"
   []
@@ -154,9 +153,9 @@
   "Get device name
    Options:
    - :preset - BrainFlow preset to use (default: DEFAULT_PRESET)"
-  [board-shim & {:keys [preset]
+  [board-id & {:keys [preset]
                  :or {preset BrainFlowPresets/DEFAULT_PRESET}}]
-  (.get_device_name board-shim preset))
+  (BoardShim/get_device_name board-id preset))
 
 (defn get-board-data
   "Get data from the board as a Clojure data structure (Outside of a recording)
@@ -232,56 +231,58 @@
 
 
 (defn brainflow-channel-data
-  "Safely get channels using reflection to handle different method signatures"
-  [method-name board-id preset]
+  "Call a static BrainFlow method using reflection.
+   Supports methods with different argument types (e.g., 1 or 2 args)."
+  [method-name args arg-types]
   (try
-    (println "Board ID type: " (class board-id))  ; Print the type of board-id
-    (println "Preset type: " (class preset))
-    (let [method (.getMethod BoardShim
-                             (name method-name)
-                             (into-array Class [Integer/TYPE BrainFlowPresets]))]
-      (.invoke method nil (to-array [board-id preset])))
-    (catch NoSuchMethodException e
+    (let [method (.getMethod BoardShim method-name (into-array Class arg-types))]
+      (.invoke method nil (to-array args)))
+    (catch Exception e
       (throw (IllegalArgumentException.
               (str "Failed to call " method-name ": " (.getMessage e)))))))
 
 (def channel-types
-  [:eeg :emg :ecg :eog :eda :ppg :exg
-   :temperature :resistance :other
-   :accel :analog :gyro :magnetometer
-   :package-num :battery :timestamp :marker])
+  [:eeg :emg :ecg :eog #_:eda #_:ppg :exg
+   #_:temperature #_:resistance #_:other
+   :accel #_:analog #_:gyro #_:magnetometer
+   #_:package-num #_:battery :timestamp :marker])
+
+(def channel-method-overrides
+  {:timestamp "get_timestamp_channel"
+   :marker "get_marker_channel"})
 
 (defn get-channel-data
-  "Get channels of a specific type from a board or shim
-   
-   Parameters:
-   - method-name: Keyword identifying the channel type (:eeg, :emg, etc.)
-   - board-or-shim: BoardShim instance or board ID number
-   
-   Options:
-   - :preset (default: DEFAULT_PRESET)
-   - :as (:vec or :array, default: :vec)"
-  [method-name board-or-shim & {:keys [preset as]
+   [method-key board-or-shim & {:keys [preset as method-name]
                                 :or {preset BrainFlowPresets/DEFAULT_PRESET
                                      as :vec}}]
-  (let [board-id (if (instance? BoardShim board-or-shim)
-                   (get-board-id board-or-shim)
-                   (int board-or-shim))
-        java-method-name (str "get_" (name method-name) "_channels")
-        result (brainflow-channel-data java-method-name board-id preset)]
-    (case as
-      :array result
-      :vec   (vec result)
-      (throw (ex-info "Invalid :as option"
-                      {:valid [:vec :array] :given as})))))
+   (let [board-id (if (instance? BoardShim board-or-shim)
+                    (get-board-id board-or-shim)
+                    (int board-or-shim))
+         [java-method-name arg-types args] (cond
+                                             (#{"get_timestamp_channel" "get_marker_channel"} method-name)
+                                             [method-name [Integer/TYPE] [board-id]]
+ 
+                                             :else
+                                             [(or method-name
+                                                  (str "get_" (name method-key) "_channels"))
+                                              [Integer/TYPE BrainFlowPresets]
+                                              [board-id preset]])
+         result (brainflow-channel-data java-method-name args arg-types)]
+     (case as
+       :array result
+       :vec   (if (integer? result) [result] (vec result))
+       (throw (ex-info "Invalid :as option"
+                       {:valid [:vec :array] :given as})))))
 
 (defmacro defchannel-getters []
   `(do
-     ~@(for [k channel-types]
+     ~@(for [k channel-types
+             :let [method-name (get channel-method-overrides k
+                                    (str "get_" (name k) "_channels"))]]
          `(defn ~(symbol (str "get-" (name k) "-channels"))
             ~(str "Get " (name k) " channels for the specified board or shim")
             [board-or-shim# & opts#]
-            (apply get-channel-data ~k board-or-shim# opts#)))))
+            (apply get-channel-data ~k board-or-shim# :method-name ~method-name opts#)))))
 
 (defchannel-getters)
 

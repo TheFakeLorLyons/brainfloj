@@ -20,7 +20,7 @@
 (defn create-test-board-shim
   "Create a test board-shim that returns a square wave"
   []
-  (let [samples (atom (generate-square-wave 10 50 5 250)) ;; 10Hz, 50μV, 5 seconds
+  (let [samples (atom (generate-square-wave 10 50 5 250)) ; 10Hz, 50μV, 5 seconds
         index (atom 0)]
     (proxy [BoardShim] [BoardIds/SYNTHETIC_BOARD (BrainFlowInputParams.)]
       (getBoardId [] BoardIds/SYNTHETIC_BOARD)

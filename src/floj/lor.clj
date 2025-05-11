@@ -5,7 +5,6 @@
             [clojure.string :as str]
             [cognitect.transit :as transit]
             [floj.brainflow.board-ids :as id]
-            [floj.frequency-analysis :as fft]
             [floj.io :as fio]
             [floj.state :as state]
             [floj.brainflow.board-shim :as brainflow]
@@ -31,238 +30,109 @@
         formatter (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss")]
     (.format formatter date)))
 
-(defn create-local-calibration-index
-  "Creates a local calibration index based on the current sensor values and profile calibration"
-  [channel-data profile-calibration]
-  (let [band-distribution (or
-                            (get-in profile-calibration [:golden-tensor :spectral :frequency-domain])
-                            {:alpha 0.022 :beta 0.774 :gamma 0.201})
-
-        channels-band-power (mapv
-                              (fn [channel-info]
-                                (try
-                                  (let [channel (if (map? channel-info)
-                                                  (:data channel-info)
-                                                  channel-info)
-
-                                        valid-data (if (and (sequential? channel) (seq channel))
-                                                     channel
-                                                     [0.0 0.0 0.0 0.0])
-                                        
-                                        padded-data (if (< (count valid-data) 32)
-                                                      (concat valid-data (repeat (- 32 (count valid-data)) 0.0))
-                                                      valid-data)
-
-                                        fft-result (fft/perform-fft (vec padded-data) 200)
-                                        band-powers {:delta (apply + (map #(* % %) (take 4 fft-result)))
-                                                     :theta (apply + (map #(* % %) (subvec fft-result 4 8)))
-                                                     :alpha (apply + (map #(* % %) (subvec fft-result 8 13)))
-                                                     :beta (apply + (map #(* % %) (subvec fft-result 13 30)))
-                                                     :gamma (apply + (map #(* % %) (subvec fft-result 30)))}]
-                                    band-powers)
-                                  (catch Exception e
-                                    (println "Error processing channel data:" (.getMessage e))
-                                    {:delta 0.0 :theta 0.0 :alpha 0.0 :beta 0.0 :gamma 0.0})))
-                              channel-data)
-
-        avg-band-power (reduce (fn [acc channel-power]
-                                 (merge-with + acc channel-power))
-                         {:delta 0.0 :theta 0.0 :alpha 0.0 :beta 0.0 :gamma 0.0}
-                         channels-band-power)
-
-        total-power (apply + (vals avg-band-power))
-        normalized-power (if (pos? total-power)
-                           (reduce-kv (fn [m k v]
-                                        (assoc m k (/ v total-power)))
-                             {}
-                             avg-band-power)
-                           {:delta 0.0 :theta 0.0 :alpha 0.2 :beta 0.5 :gamma 0.0})
-
-        calibration-factors (reduce-kv (fn [m k v]
-                                         (let [target (get band-distribution k 0.0)
-                                               current (get normalized-power k 0.0)]
-                                           (assoc m k (if (pos? current)
-                                                        (/ target current)
-                                                        1.0))))
-                              {}
-                              band-distribution)
-
-        ; Focusing on realistic user frequency bands
-        beta-focus-zone {:center 17.5 ; Center frequency in Hz
-                         :width 5.0   ; Width in Hz (15-20)
-                         :bounds [10.0 25.0] ; Outer bounds
-                         :sensitivity-curve-params {:center 17.5 :sigma 2.83}}]
-    {:band-distribution normalized-power
-     :target-distribution band-distribution
-     :calibration-factors calibration-factors
-     :focus-zone beta-focus-zone
-     :timestamp (System/currentTimeMillis)}))
-
-
-(defn extract-channel-data
-  "Extract raw channel data from channel metadata or fetch from lor files"
-  [lorfile-dir channel-metadata]
-  (try
-    (mapv (fn [channel]
-            (let [channel-idx (:channel-idx channel)
-                  file-name (str lorfile-dir "/" channel-idx ".lor")]
-              (if (.exists (io/file file-name))
-                (try
-                  (let [lor-data (read-transit (slurp file-name))]
-                    (:data lor-data))
-                  (catch Exception e
-                    (println "Error reading lor file for channel" channel-idx ":" (.getMessage e))
-                    []))
-                (do
-                  (println "Warning: Lor file does not exist for channel" channel-idx)
-                  []))))
-      channel-metadata)
-    (catch Exception e
-      (println "Error extracting channel data:" (.getMessage e))
-      [])))
-
 (defn update-metadata-calibration!
   "Updates the metadata file with a new calibration index"
   [lorfile-dir metadata calibration-index]
   (try
+    (println "Attempting to update metadata file in directory:" lorfile-dir)
+    (println "Current metadata keys:" (keys metadata))
+    (println "New calibration index:" calibration-index)
     (let [updated-metadata (assoc metadata :calibration-index calibration-index)
           path (str lorfile-dir "/recording_metadata.edn")]
       (with-open [w (io/writer path)]
         (binding [*print-length* nil
                   *print-level* nil]
           (pprint updated-metadata w)))
-      (println "Updated metadata with new calibration index")
+      (println "Successfully wrote recording metadata file")
       updated-metadata)
     (catch Exception e
       (println "Error updating metadata calibration:" (.getMessage e))
+      (println "Stack trace:")
+      (.printStackTrace e)
       nil)))
 
 (defn write-metadata!
   "Creates recording directory and initial metadata file with calibration index"
-  [base-name board-id]
-  (try
-    (let [sampling-rate (brainflow/get-sampling-rate board-id)
-          eeg-channels (brainflow/get-channel-data :eeg board-id)
+  ([session-name board-id]
+   (write-metadata! session-name board-id nil))
+  ([base-name board-id custom-config]
+   (try
+     (let [sampling-rate (brainflow/get-sampling-rate board-id)
+           eeg-channels (brainflow/get-channel-data :eeg board-id)
 
-          _ (when-not (and sampling-rate eeg-channels)
-              (throw (Exception. "Required state functions not available")))
-          
-          lorfile-dir (fio/create-recording-directory! base-name)
+           _ (when-not (and sampling-rate eeg-channels)
+               (throw (Exception. "Required state functions not available")))
 
-          metadata {:recording-id (str base-name "_" (System/currentTimeMillis))
-                    :start-time (System/currentTimeMillis)
-                    :board-id board-id
-                    :sampling-rate sampling-rate
-                    :device-type (id/board-types board-id)
-                    :recorded-at (java.util.Date.)
-                    :channel-count (count eeg-channels)
-                    :version "1.0"}
+           lorfile-dir (if custom-config
+                         (let [path (:path custom-config)
+                               recording-type (:recording-type custom-config)]
+                          (fio/create-recording-directory! path recording-type))
+                         (fio/create-recording-directory! base-name))
 
-          _ (swap! state/recording-context assoc :lorfile-dir lorfile-dir)
+           metadata {:recording-id (str base-name "_" (System/currentTimeMillis))
+                     :start-time (System/currentTimeMillis)
+                     :board-id board-id
+                     :sampling-rate sampling-rate
+                     :device-type (id/board-types board-id)
+                     :recorded-at (java.util.Date.)
+                     :channel-count (count eeg-channels)
+                     :version "1.0"}
 
-          current-profile-name (or (:name (profiles/get-active-profile)) "default")
-          _ (println "Using profile:" current-profile-name)
+           _ (swap! state/recording-context assoc :lorfile-dir lorfile-dir)
 
-          profile-calibration (try
-                                (when (and (resolve 'refract/load-calibration-profile)
-                                        (fn? (resolve 'refract/check-calibration))
-                                        ((resolve 'refract/check-calibration) current-profile-name))
-                                  (println "Profile calibration found, loading...")
-                                  ((resolve 'refract/load-calibration-profile) current-profile-name))
-                                (catch Exception e
-                                  (println "Error loading calibration profile:" (.getMessage e))
-                                  nil))
+           current-profile-name (or (:name (profiles/get-active-profile)) "default")
+           _ (println "Using profile:" current-profile-name)
 
-          default-local-calibration (when profile-calibration
-                                      (let [band-distribution (or
+           profile-calibration (try
+                                 (when (and (resolve 'refract/load-calibration-profile)
+                                            (fn? (resolve 'refract/check-calibration))
+                                            ((resolve 'refract/check-calibration) current-profile-name))
+                                   (println "Profile calibration found, loading...")
+                                   ((resolve 'refract/load-calibration-profile) current-profile-name))
+                                 (catch Exception e
+                                   (println "Error loading calibration profile:" (.getMessage e))
+                                   nil))
+
+           default-local-calibration (when profile-calibration
+                                       (let [band-distribution (or
                                                                 (get-in profile-calibration
-                                                                  [:golden-tensor :spectral :frequency-domain])
+                                                                        [:golden-tensor :spectral :frequency-domain])
                                                                 {:alpha 0.022 :beta 0.774 :gamma 0.201})]
-                                        {:band-distribution band-distribution
-                                         :target-distribution band-distribution
-                                         :calibration-factors {:alpha 1.0 :beta 1.0 :gamma 1.0}
-                                         :focus-zone {:center 17.5
-                                                      :width 5.0
-                                                      :bounds [10.0 25.0]
-                                                      :sensitivity-curve-params {:center 17.5 :sigma 2.83}}
-                                         :timestamp (System/currentTimeMillis)}))
+                                         {:band-distribution band-distribution
+                                          :target-distribution band-distribution
+                                          :calibration-factors {:alpha 1.0 :beta 1.0 :gamma 1.0}
+                                          :focus-zone {:center 17.5
+                                                       :width 5.0
+                                                       :bounds [10.0 25.0]
+                                                       :sensitivity-curve-params {:center 17.5 :sigma 2.83}}
+                                          :timestamp (System/currentTimeMillis)}))
 
-          complete-metadata (cond-> metadata
-                              default-local-calibration (assoc :calibration-index default-local-calibration)
-                              profile-calibration (assoc :calibration-profile-name current-profile-name))
+           complete-metadata (cond-> metadata
+                               default-local-calibration (assoc :calibration-index default-local-calibration)
+                               profile-calibration (assoc :calibration-profile-name current-profile-name))
 
-          metadata-path (str lorfile-dir "/recording_metadata.edn")]
+           metadata-path (str lorfile-dir "/recording_metadata.edn")]
 
-      (with-open [w (io/writer metadata-path)]
-        (binding [*print-length* nil
-                  *print-level* nil]
-          (pprint complete-metadata w)))
+       (let [dir-file (java.io.File. lorfile-dir)]
+         (when-not (.exists dir-file)
+           (println "Creating directory structure:" lorfile-dir)
+           (.mkdirs dir-file)))
 
-      (println "Initial metadata with calibration written to" metadata-path)
+       (with-open [w (io/writer metadata-path)]
+         (binding [*print-length* nil
+                   *print-level* nil]
+           (pprint complete-metadata w)))
 
-      {:lorfile-dir lorfile-dir
-       :metadata complete-metadata
-       :eeg-channels eeg-channels
-       :sampling-rate sampling-rate})
-    (catch Exception e
-      (println "Error creating recording metadata:" (.getMessage e))
-      (.printStackTrace e)
-      nil)))
+       (println "Initial metadata with calibration written to" metadata-path)
 
-(defn apply-calibration
-  "Apply calibration to a single data point/channel"
-  [data calibration-index sampling-rate]
-  (if calibration-index
-    (let [calibration-factors (:calibration-factors calibration-index)
-          focus-zone (:focus-zone calibration-index)
-
-          ;; Recreate sensitivity function from parameters
-          sensitivity-fn (fn [freq]
-                           (let [center (get-in focus-zone [:sensitivity-curve-params :center] 17.5)
-                                 sigma (get-in focus-zone [:sensitivity-curve-params :sigma] 2.83)
-                                 dist (Math/abs (- freq center))]
-                             (Math/exp (- (/ (* dist dist) (* 2 sigma sigma))))))
-
-          ;; Get frequency components - ensure we have enough data
-          valid-data (if (< (count data) 32)
-                       (concat data (repeat (- 32 (count data)) 0.0))
-                       data)
-          fft-result (fft/perform-fft (vec valid-data) sampling-rate)
-
-          ;; Apply calibration factors to specific frequency bands
-          calibrated-fft (mapv (fn [idx component]
-                                 (let [freq (* idx (/ sampling-rate (count fft-result)))
-                                       band-key (cond
-                                                  (< freq 4) :delta
-                                                  (< freq 8) :theta
-                                                  (< freq 13) :alpha
-                                                  (< freq 30) :beta
-                                                  :else :gamma)
-                                       factor (get calibration-factors band-key 1.0)
-
-                                       ;; Additional focus zone adjustment for beta band
-                                       focus-factor (if (= band-key :beta)
-                                                      (let [bounds (:bounds focus-zone)]
-                                                        (if (and bounds
-                                                              (<= (first bounds) freq)
-                                                              (<= freq (second bounds)))
-                                                          (* factor (sensitivity-fn freq))
-                                                          factor))
-                                                      factor)]
-                                   (* component focus-factor)))
-                           (range (count fft-result))
-                           fft-result)
-
-          ;; Convert back to time domain
-          calibrated-signal (fft/perform-fft calibrated-fft 200)]
-
-      ;; Return just the needed points if we had to pad
-      (if (< (count data) 32)
-        (take (count data) calibrated-signal)
-        calibrated-signal))
-
-    ;; Return original data if no calibration
-    data))
+       {:lorfile-dir lorfile-dir
+        :metadata complete-metadata
+        :eeg-channels eeg-channels
+        :sampling-rate sampling-rate})
+     (catch Exception e
+       (println "Error creating recording metadata:" (.getMessage e))
+       (.printStackTrace e)
+       nil))))
 
 (defn get-metadata-summary
   "Get a summary of the metadata for a lor directory including calibration info"
@@ -347,7 +217,7 @@
 (defn write-lor!
   "Write a complete lorfile directory with a single metadata file and one .lor file per channel"
   [data tags board-id]
-  (let [sampling-rate  (brainflow/get-sampling-rate board-id)
+  (let [sampling-rate (brainflow/get-sampling-rate board-id)
         eeg-channels (brainflow/get-channel-data :eeg board-id)
         lorfile-dir (:lorfile-dir @state/recording-context)]
     (if (and sampling-rate eeg-channels lorfile-dir)
@@ -359,26 +229,33 @@
                       :recorded-at (java.util.Date.)
                       :channel-count (count eeg-channels)
                       :version "1.0"}
-            channel-metadata (atom [])]
-
+            channel-metadata (atom [])
+            ; Extract EEG data from the structured format
+            eeg-samples (mapcat (fn [data-point]
+                                  (when-let [eeg-data (:eeg data-point)]
+                                    eeg-data))
+                                data)]
         (write-tags! lorfile-dir tags)
         (try
           (doseq [idx (range (count eeg-channels))]
             (let [channel-idx (nth eeg-channels idx)
-                  raw-channel-data (map #(get % (+ idx 1)) data) ;offset by 1 because channel 0 is sample
-                  channel-data (map (fn [item]
-                                      (cond
-                                        (number? item) item
-                                        (and (vector? item) (seq item) (number? (first item))) (first item)
-                                        :else 0.0))
-                                    raw-channel-data)
-                  channel-meta (write-lor-channel-file!
-                                lorfile-dir
-                                channel-idx
-                                channel-data
-                                (str "Channel " channel-idx)
-                                sampling-rate)]
-              (swap! channel-metadata conj channel-meta)))
+                  _ (println "Processing channel idx:" channel-idx "at position:" idx)
+                  ;; Extract data for this specific channel from all samples
+                  channel-data (mapv (fn [sample]
+                                       ;; Each sample is a vector where first element could be timestamp
+                                       ;; and subsequent elements are channel values
+                                       (if (and (vector? sample) (> (count sample) (inc idx)))
+                                         (nth sample (inc idx))
+                                         0.0))
+                                     eeg-samples)]
+              (println "Channel" channel-idx "data sample:" (take 5 channel-data))
+              (let [channel-meta (write-lor-channel-file!
+                                  lorfile-dir
+                                  channel-idx
+                                  channel-data
+                                  (str "Channel " channel-idx)
+                                  sampling-rate)]
+                (swap! channel-metadata conj channel-meta))))
           (println "Successfully wrote lorfile to directory:" lorfile-dir)
           lorfile-dir
           (catch Exception e
@@ -390,6 +267,7 @@
                  ", eeg-channels: " (boolean eeg-channels)
                  ", lorfile-dir: " lorfile-dir)
         nil))))
+
 
 (defn read-lor-channel-file
   "Read a single .lor channel file, parsing the header and binary data (doubles)"
@@ -518,95 +396,6 @@
 
 (defn str-join [separator coll]
   (str/join separator coll))
-
-(defn safe-transform-to-channels
-  "Safely transform time-series data to channel arrays"
-  [data]
-  (try
-    (when (and (seq data)
-            (seq (first data))
-            (vector? (first data)))
-      (let [num-channels (dec (count (first data)))]
-        (if (pos? num-channels)
-          ;; Initialize empty vectors for each channel
-          (let [channels (vec (repeat num-channels []))]
-            (reduce (fn [acc data-point]
-                      (if (< (count data-point) 2)
-                        acc  ;; Skip invalid data
-                        ;; Group by channel (skip timestamp)
-                        (reduce-kv (fn [ch-acc idx val]
-                                     (if (zero? idx)
-                                       ch-acc  ;; Skip timestamp
-                                       (update ch-acc (dec idx) conj val)))
-                          acc
-                          (vec data-point))))
-              channels
-              data))
-          ;; Fallback for invalid data
-          [])))
-    (catch Exception e
-      (println "Error transforming data to channels:" (.getMessage e))
-      [])))
-
-
-(defn write-recording-data!
-  "Write recording data using an existing context"
-  [eeg-data tags ctx]
-  (let [lorfile-dir (:lorfile-dir ctx)
-        metadata (:metadata ctx)
-        sampling-rate (:sampling-rate ctx)]
-
-    (try
-      (println "Writing recording data to" lorfile-dir)
-
-      ;; Validate directory exists
-      (when-not (.exists (io/file lorfile-dir))
-        (println "Creating directory" lorfile-dir)
-        (.mkdirs (io/file lorfile-dir)))
-
-      ;; Extract channel data safely
-      (let [channel-data (safe-transform-to-channels eeg-data)]
-
-        (println "Processing" (count channel-data) "channels")
-
-        ;; Write each channel to its own file
-        (doseq [[idx values] (map-indexed vector channel-data)]
-          (let [file-path (str lorfile-dir "/" (inc idx) ".lor")
-                channel-data {:channel-idx (inc idx)
-                              :name (str "Channel " (inc idx))
-                              :sampling-rate sampling-rate
-                              :data (vec values)}]
-            (spit file-path (write-transit channel-data))
-            (println "Wrote channel" (inc idx) "with" (count values) "samples")))
-        (when (seq tags)
-          (let [tags-file (str lorfile-dir "/tags.edn")]
-            (spit tags-file (pr-str tags))
-            (println "Wrote" (count tags) "tags to" tags-file)))
-        (let [channel-info (mapv (fn [idx values]
-                                   {:channel-idx (inc idx)
-                                    :name (str "Channel " (inc idx))
-                                    :sampling-rate sampling-rate
-                                    :data-points (count values)
-                                    :file (str (inc idx) ".lor")})
-                             (range (count channel-data))
-                             channel-data)
-              calibration-index (get metadata :calibration-index)
-              final-metadata (-> metadata
-                               (assoc :channels channel-info)
-                               (cond-> calibration-index (assoc :calibration-index calibration-index)))
-              metadata-file (str lorfile-dir "/recording_metadata.edn")]
-          (with-open [w (io/writer metadata-file)]
-            (binding [*print-length* nil
-                      *print-level* nil]
-              (pprint final-metadata w)))
-          (println "Updated final metadata with" (count channel-info) "channels")
-          (when calibration-index
-            (println "Preserved calibration index in metadata"))))
-      lorfile-dir
-      (catch Exception e
-        (println "Error writing recording data:" (.getMessage e))
-        (.printStackTrace e)
-        nil))))
 
 (defn display-recordings
   "Display a formatted list of available lorfiles"

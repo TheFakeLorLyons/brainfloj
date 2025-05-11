@@ -2,26 +2,7 @@
   (:require [mount.core :as mount :refer [defstate]]
             [clojure.edn :as edn]
             [clojure.java.io :as io])
-  (:import [brainflow BoardShim BoardIds BrainFlowInputParams LogLevels]))
-
-(defn configure-brainflow-logging!
-  "Configure BrainFlow logging to write to our application logs directory"
-  []
-  (let [log-dir (str (System/getProperty "user.home") "/.lor/logs/device_logs")
-        log-file (str log-dir "/brainflow.log")]
-    (try
-      (BoardShim/enable_dev_board_logger)
-      (BoardShim/set_log_file log-file)
-      (BoardShim/set_log_level LogLevels/LEVEL_INFO)
-      (catch Exception e
-        (println "Failed to configure BrainFlow logging:" (.getMessage e))))))
-
-(defn redirect-system-output! []
-  (let [log-file (str (System/getProperty "user.home") "/.lor/logs/app_logs/sys-out.log")
-        log-stream (java.io.PrintStream. (java.io.FileOutputStream. log-file false))]
-    (configure-brainflow-logging!)
-    (System/setOut log-stream)
-    (System/setErr log-stream)))
+  (:import [brainflow BoardShim BoardIds BrainFlowInputParams]))
 
 (def dev-params (doto (BrainFlowInputParams.)
                   (.set_serial_port "COM7")
@@ -63,6 +44,11 @@
                       :switch-profile! nil
                       :get-active-profile nil
                       :delete-profile! nil
+
+                      :add-wave-signature nil
+                      :list-wave-signature-categories nil
+                      :list-wave-signatures nil
+                      :train-model nil
 
                       :release-board! nil}))
 

@@ -1,9 +1,12 @@
 (ns floj.cli
   (:require [floj.api :as api]
             #_[floj.bluetooth :as bluetooth] ;coming soon!
+            [floj.calibration :as calibrate]
             [floj.cursor :as cursor]
             [floj.io :as fio]
             [floj.keybindings :as kb]
+            [floj.wave-lexicon :as lexi]
+            [floj.log :as log]
             [floj.lor :as lor]
             [floj.profiles :as profiles]
             [floj.record :as record]
@@ -12,11 +15,6 @@
             [mount.core :as mount])
   (:gen-class))
 
-(System/setProperty "jna.debug_load" "false")
-(System/setProperty "jna.debug_load.jna" "false")
-(System/setProperty "jna.nosys" "true") 
-(state/redirect-system-output!)
-
 (defn initialize-modules! []
   (api/initialize-brainflow!)
   (fio/initialize-io!)
@@ -24,8 +22,10 @@
   (kb/initialize-keybindings!)
   (profiles/initialize-profiles!)
   #_(bluetooth/initialize-bluetooth-module!) ;see above
+  (lexi/initialize-lexicon!)
   (record/initialize-record!)
-  (refraction/initialize-calibration!)
+  (calibrate/initialize-calibration!)
+  (refraction/initialize-baseline!)
   (cursor/initialize-cursor!))
 
 (defn check-and-load-calibration! [profile]
@@ -38,12 +38,14 @@
           (println "Calibration data loaded successfully."))
         (println "No calibration data found. Use 'c' to run calibration.")))))
 
-(defn initialize-application! [args]
-  (fio/application-setup!)      ;creates/loads configurations and profiles
-  (initialize-modules!))        ;get boardType
+(defn initialize-application! []
+  (fio/application-setup!)
+  (profiles/create-default-profile!)
+  (initialize-modules!))
 
 (defn cli-program [board-shim]
   (let [active-profile ((:get-active-profile @state/state))]
+    (lexi/fill-initial-lexicon!)
     (println "You are logged in as:" (:name active-profile))
     (kb/load-profile-keymap!)
 
@@ -65,8 +67,13 @@
           (record/execute-command (first input) board-shim)
           (recur))))))
 
-(defn -main [& args]
-  (initialize-application! args)
+(defn -main []
+    (log/redirect-system-output!)
+  (System/setProperty "jna.debug_load" "false")
+  (System/setProperty "jna.debug_load.jna" "false")
+  (System/setProperty "jna.nosys" "true")
+  
+  (initialize-application!)
   (let [_ (mount/start)]
     (cli-program state/shim)
     (mount/stop)))

@@ -2,14 +2,27 @@
   (:require [floj.brainflow.board-shim :as brainflow]
             [floj.brainflow.board-ids :as id]
             [floj.brainflow.brainflow-input-params :as params]
-            [floj.io :as fio]
             [floj.state :as state]
             [floj.profiles :as profiles]
             [clojure.java.io :as io]
             [clojure.edn :as edn])
-  (:import  [brainflow
-             BrainFlowInputParams BoardIds DataFilter
-             WindowOperations FilterTypes]))
+  (:import  [brainflow BoardIds]))
+
+(defn get-current-sample-rate
+  []
+  (brainflow/get-sampling-rate (brainflow/get-board-id @state/shim)))
+(defn get-current-channels
+  []
+  (brainflow/get-channel-data :eeg @state/shim))
+#_(defn get-current-board-id
+  []
+  (brainflow/get-board-id (brainflow/get-board-id @state/shim)))
+
+
+(def CURRENT_SRATE (get-current-sample-rate))
+(def CURRENT_CHANNELS (get-current-channels))
+(def CURRENT_CHANNEL_COUNT (count (get-current-channels)))
+#_(def CURRENT_BOARD_ID (get-current-board-id))
 
 (defn get-board-info
   "Get detailed information about the currently connected board"
@@ -19,11 +32,11 @@
       (try
         (let [board-id (brainflow/get-board-id shim)
               board-type (get id/board-types board-id "Unknown Board")
-              channels (brainflow/get-channel-data :eeg board-id)
-              num-channels (count channels)
+              channels CURRENT_CHANNELS
+              num-channels CURRENT_CHANNEL_COUNT
               accel-channels (brainflow/get-channel-data :accel board-id)
               gyro-channels (brainflow/get-channel-data :gyro board-id)
-              sampling-rate (brainflow/get-sampling-rate board-id)
+              sampling-rate CURRENT_SRATE
               is-prepared (brainflow/board-ready? shim)
               is-recording @state/recording?]
           {:board-id board-id
@@ -49,7 +62,7 @@
           current-board)
         (do
           (println "Switching to" (get id/board-types board-id "Unknown Board") "...")
-          ;; Release current board if exists
+          ; Release current board if exists
           (when current-board
             (println "Releasing current board...")
             (try
@@ -61,17 +74,15 @@
               (catch Exception e
                 (println "Warning during board cleanup:" (.getMessage e)))))
 
-          ;; Debug params
           (println "Creating board with parameters:")
           (println "  - Board ID:" board-id)
           (println "  - MAC Address:" (.get_mac_address params))
           (println "  - Serial Port:" (.get_serial_port params))
           (println "  - Other Info:" (.get_other_info params))
 
-          ;; Create new board directly
+          ; Create new board directly
           (println "Creating new board connection...")
           (try
-            ;; Try creating the board directly without using the wrapper
             (let [new-board-shim (brainflow.BoardShim. board-id params)]
               (println "Board created, preparing session...")
               (try
@@ -107,14 +118,13 @@
 (defn update-profile-bci-device!
   "Update the BCI device settings in a profile"
   [profile-name {:keys [device-type board-id mac-address com-port]}]
-  (let [profile-path (str (fio/config-base-dir) "/profiles/" profile-name ".edn")]
+  (let [profile-path (profiles/get-latest-profile-path profile-name)]
     (when (.exists (io/file profile-path))
       (let [profile (edn/read-string (slurp profile-path))
-            updated-profile (assoc profile :bci-device
-                                   {:device-type device-type
-                                    :board-id board-id
-                                    :mac-address mac-address
-                                    :com-port com-port})]
+            updated-profile (assoc profile :bci-device {:device-type device-type
+                                                        :board-id board-id
+                                                        :mac-address mac-address
+                                                        :com-port com-port})]
         (spit profile-path (pr-str updated-profile))
         updated-profile))))
 
@@ -147,7 +157,7 @@
         (print "Enter COM port (if applicable, e.g., COM3 or /dev/ttyUSB0): ")
         (flush)
         (let [com-port (read-line)
-              config {:board-type (id/board-types board-id)
+              config {:device-type (id/board-types board-id)
                       :board-id board-id
                       :mac-address mac-address
                       :com-port com-port
@@ -210,52 +220,6 @@
       (let [response (read-line)]
         (when (or (= response "y") (= response "Y"))
           (configure-bci-device!))))))
-
-(def filter-type-map
-  {:butterworth FilterTypes/BUTTERWORTH
-   :chebyshev FilterTypes/CHEBYSHEV_TYPE_1})
-
-(defn filter-data!
-  "Applies an in-place EEG filter using BrainFlow’s static methods.
-   Accepts double[] arrays. Mutates them!
-   filter-type: one of :lowpass, :highpass, :bandpass, :bandstop
-   filter-shape: one of :butterworth or :chebyshev"
-  [data
-   sampling-rate
-   start-freq
-   end-freq
-   order
-   filter-type
-   & {:keys [filter-shape ripple]
-      :or {filter-shape :butterworth ripple 0.0}}]
-  (let [shape (get filter-type-map filter-shape)]
-    (case filter-type
-      :lowpass
-      (DataFilter/perform_lowpass data sampling-rate end-freq order shape ripple)
-
-      :highpass
-      (DataFilter/perform_highpass data sampling-rate start-freq order shape ripple)
-
-      :bandpass
-      (DataFilter/perform_bandpass data sampling-rate start-freq end-freq order shape ripple)
-
-      :bandstop
-      (DataFilter/perform_bandstop data sampling-rate start-freq end-freq order shape ripple)
-
-      (throw (IllegalArgumentException.
-              (str "Unsupported filter type: " filter-type))))))
-
-(defn get-psd
-  "Calculate Power Spectral Density (PSD) from data"
-  [data sampling-rate]
-  ;; Use the entire data array (start at 0, end at length)
-  (DataFilter/get_psd data 0 (count data) sampling-rate WindowOperations/HANNING))
-
-(defn get-band-power
-  "Calculate band power for a specific frequency range using PSD"
-  [data sampling-rate start-freq stop-freq]
-  (let [psd (get-psd data sampling-rate)]
-    (DataFilter/get_band_power psd start-freq stop-freq)))
 
 (defn initialize-brainflow! []
   (state/register-fn! :release-board!    brainflow/release-session!)
