@@ -66,7 +66,7 @@
                                             (file-seq (io/file history-dir))))]
 
     (if (or existing-active-profile existing-history-files)
-        nil
+      nil
       (do
         ;; Ensure directories exist
         (fio/ensure-profile-directories! profile-name)
@@ -261,7 +261,7 @@
 (defn initialize-profiles! []
   (state/register-fn!   :create-profile!      create-profile!)
   (state/register-fn!   :set-default-profile! set-default-profile!)
-    (state/register-fn! :save-profile!        save-profile!)
+  (state/register-fn!   :save-profile!        save-profile!)
   (state/register-fn!   :load-profile         load-profile)
   (state/register-fn!   :switch-profile!      switch-profile!)
   (state/register-fn!   :delete-profile!      delete-profile!)

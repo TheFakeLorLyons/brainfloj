@@ -4,12 +4,6 @@
             [clojure.java.io :as io])
   (:import [brainflow BoardShim BoardIds BrainFlowInputParams]))
 
-(def dev-params (doto (BrainFlowInputParams.)
-                  (.set_serial_port "COM7")
-                  (.set_mac_address "f0:c3:b2:23:73:e3")))
-
-(def dev-board-id BoardIds/SYNTHETIC_BOARD)
-
 (def params (doto (BrainFlowInputParams.)
               (.set_serial_port "COM1")
               (.set_mac_address "00:11:22:33:44:55")))
