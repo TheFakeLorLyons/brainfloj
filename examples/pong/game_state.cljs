@@ -217,6 +217,7 @@
 
 ; Initialize game
 (defn init-game! []
-  (println "Initializing game state")
+  (js/console.log "Initializing game state")
   (reset! state default-state)
-  (init-keyboard-controls!))
+  (init-keyboard-controls!)
+  (js/console.log "Intitialized!"))

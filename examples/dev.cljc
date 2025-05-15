@@ -9,7 +9,7 @@
 
 #?(:clj
    (def config
-      {:host "0.0.0.0"
+      {:host "localhost"
        :port 8080
        :resources-path "public"
        :manifest-path "public/example/js/manifest.edn"}))
@@ -23,14 +23,14 @@
         electric-entrypoint (fn [ring-request]
                               (e/boot-server
                                {:hyperfiddle.electric/user-version user-version}
-                               server/App
+                               (fn [] (server/ServerApp))
                                ring-request))]
 
     (def server
       (server/start-server!
        electric-entrypoint
        config))
-    (comment (.stop server)))))
+     (log/info "Server started successfully on port" (:port config)))))
 
 #?(:cljs
    (do
