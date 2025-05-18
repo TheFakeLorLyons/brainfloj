@@ -25,7 +25,11 @@
         ring-cors/ring-cors {:mvn/version "0.1.13"}
         thheller/shadow-cljs {:mvn/version "2.28.21"}}
  :paths ["src" "resources"]
- :aliases {:deploy {:extra-deps {slipset/deps-deploy {:mvn/version "0.2.1"}}
+ :aliases {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.9"
+                                                         :exclusions [com.google.guava/guava
+                                                                      org.slf4j/slf4j-nop]}}
+                   :ns-default build}
+           :deploy {:extra-deps {slipset/deps-deploy {:mvn/version "0.2.1"}}
                     :ns-default deps-deploy.deps-deploy}
 
            :doc {:extra-deps {codox/codox {:mvn/version "0.10.8"}}
