@@ -95,7 +95,7 @@
       (api/connect-from-profile! (profiles/get-active-profile))
       (kb/create-recording-function :start-recording!)
       (record/start-recording!)
-      (record-loop! 250))
+      (record-loop! 200))
     (println "Please provide a profile name (e.g., Lor)")))
 #_(defn calibration-exists? [profile]
   (let [calib-file (io/file (profiles/profile-path profile))]
