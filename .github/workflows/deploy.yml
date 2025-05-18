@@ -2,11 +2,11 @@ name: Clojars Deployment
 
 on:
   push:
-    branches: [ main, master, dev ]
+    branches: [ main ]
     tags:
       - 'v*'  # Triggers on pushing tags like v1.0.3
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
 
 jobs:
   build:
