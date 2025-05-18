@@ -60,7 +60,7 @@ jobs:
       run: clojure -T:build jar
       
     - name: Upload JAR artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: brainfloj-jar
         path: target/*.jar
