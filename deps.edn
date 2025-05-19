@@ -27,7 +27,8 @@
  :paths ["src" "resources"]
  :aliases {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.9"
                                                          :exclusions [com.google.guava/guava
-                                                                      org.slf4j/slf4j-nop]}}
+                                                                      org.slf4j/slf4j-nop]}
+                          slipset/deps-deploy {:mvn/version "RELEASE"}}
                    :ns-default build}
            :deploy {:extra-deps {slipset/deps-deploy {:mvn/version "RELEASE"}}
                     :ns-default build
