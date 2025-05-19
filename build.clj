@@ -72,7 +72,7 @@
   (clean nil)
   (compile-clj nil)
 
-  (println "Copying BrainFlow JAR into the class directory...")
+  #_#_(println "Copying BrainFlow JAR into the class directory...")
   (let [brainflow-jar "lib/brainflow-jar-with-dependencies.jar"]
     (when (.exists (io/file brainflow-jar))
       (b/copy-file {:src brainflow-jar
