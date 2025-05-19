@@ -40,6 +40,17 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-deps-
         
+    - name: Check BrainFlow JAR exists
+      id: check_brainflow
+      run: |
+        if [ -f "lib/brainflow-jar-with-dependencies.jar" ]; then
+          echo "BRAINFLOW_EXISTS=true" >> $GITHUB_ENV
+        else
+          echo "BRAINFLOW_EXISTS=false" >> $GITHUB_ENV
+          echo "ERROR: BrainFlow JAR not found. Ensure it's correctly added to the repository."
+          exit 1
+        fi
+
     - name: Create native lib directory
       run: |
         mkdir -p lib/native
@@ -62,18 +73,24 @@ jobs:
       with:
         name: brainfloj-jar
         path: target/*.jar
+        if-no-files-found: error
         
   publish:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        lfs: true
-    
+   
+    - name: Download BrainFlow JAR
+      uses: actions/download-artifact@v4
+      with:
+        name: brainflow-jar-with-dependencies
+        path: lib/
+
     - name: Set up JDK
       uses: actions/setup-java@v4
       with:

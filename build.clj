@@ -23,8 +23,13 @@
 
 (defn compile-clj [_]
   (println "Compiling Clojure code...")
-  (b/copy-dir {:src-dirs ["src" "resources"]
-               :target-dir class-dir})
+  (b/copy-dir
+   {:src-dirs ["src" "resources"]
+    :target-dir class-dir
+    :ignores [#".*\.lor"
+              #"recording_metadata\.edn"
+              #"calibration\.edn"
+              #"tags\.edn"]})
   (println "Compilation completed"))
 
 (defn jar [_]
@@ -48,18 +53,28 @@
   (println (format "JAR file created: %s" jar-file)))
 
 (defn uber [_]
-  (println "Creating uber JAR file...")
+  (println "Creating optimized uber JAR file...")
   (clean nil)
   (compile-clj nil)
+
+  (println "Copying BrainFlow JAR into the class directory...")
+  (let [brainflow-jar "lib/brainflow-jar-with-dependencies.jar"]
+    (when (.exists (io/file brainflow-jar))
+      (b/copy-file {:src brainflow-jar
+                    :target (str class-dir "/brainflow-jar-with-dependencies.jar")})
+      (println "BrainFlow JAR copied successfully"))
+    (when-not (.exists (io/file brainflow-jar))
+      (println "WARNING: BrainFlow JAR not found at:" brainflow-jar)))
+
   (b/compile-clj {:basis basis
                   :src-dirs ["src"]
                   :class-dir class-dir})
+
   (b/uber {:class-dir class-dir
            :uber-file uber-file
            :basis basis
-           :main 'brainfloj.core
-           :classpath ["lib/brainflow-jar-with-dependencies.jar"]})
-  (println (format "Uber JAR file created: %s" uber-file)))
+           :main 'floj.cli'
+           :exclude exclude-paths}))
 
 (defn verify-native-libs [_]
   (println "Verifying native libraries...")
