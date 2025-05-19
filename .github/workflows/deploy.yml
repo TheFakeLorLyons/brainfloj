@@ -44,7 +44,7 @@ jobs:
         
     - name: Copy BrainFlow JAR
       run: |
-        cp /path/to/brainflow-jar-with-dependencies.jar lib/
+        cp /lib/brainflow-jar-with-dependencies.jar lib/
 
     - name: Verify native libs
       run: clojure -T:build verify-native-libs
