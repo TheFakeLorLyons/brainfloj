@@ -37,6 +37,7 @@
                 :basis basis
                 :src-dirs ["src"]
                 :scm {:url "https://github.com/thefakelorlyons/brainfloj"}
+                :pom-data
                 [[:licenses
                   [:license
                    [:name "MIT License"]
