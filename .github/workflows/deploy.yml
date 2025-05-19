@@ -14,7 +14,10 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-    
+      with:
+          fetch-depth: 0
+          lfs: true
+      
     - name: Set up JDK
       uses: actions/setup-java@v4
       with:
@@ -67,6 +70,9 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        lfs: true
     
     - name: Set up JDK
       uses: actions/setup-java@v4
