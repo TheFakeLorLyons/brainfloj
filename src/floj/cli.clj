@@ -2,7 +2,7 @@
   (:require [floj.api :as api]
             #_[floj.bluetooth :as bluetooth] ;coming soon!
             [floj.calibration :as calibrate]
-            [floj.cursor :as cursor]
+            #_[floj.cursor :as cursor]
             [floj.io :as fio]
             [floj.keybindings :as kb]
             [floj.wave-lexicon :as lexi]
@@ -26,7 +26,7 @@
   (record/initialize-record!)
   (calibrate/initialize-calibration!)
   (refraction/initialize-baseline!)
-  (cursor/initialize-cursor!))
+  #_(cursor/initialize-cursor!))
 
 (defn check-and-load-calibration! [profile]
   (when profile
