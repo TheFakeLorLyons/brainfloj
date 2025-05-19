@@ -30,7 +30,8 @@
                                                                       org.slf4j/slf4j-nop]}}
                    :ns-default build}
            :deploy {:extra-deps {slipset/deps-deploy {:mvn/version "RELEASE"}}
-                    :exec-fn deps-deploy.deps-deploy/deploy
+                    :ns-default build
+                    :exec-fn  build/deploy
                     :exec-args {:installer :remote
                                 :sign-releases? true
                                 :artifact "deps-deploy.jar"}}

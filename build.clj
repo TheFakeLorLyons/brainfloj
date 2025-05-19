@@ -6,7 +6,7 @@
 ;;; See also https://clojure.org/guides/tools_build
 ;;; To install jar:  clj -T:build jar
 
-(def project 'brainfloj)
+(def project 'com.github.thefakelorlyons/brainfloj)
 (def version (format "0.0.%s" (b/git-count-revs nil)))
 (def class-dir "target/classes")
 (def basis (b/create-basis {:project "deps.edn"}))
@@ -108,5 +108,8 @@
   (jar nil)
   (dd/deploy {:installer :remote
               :artifact jar-file
-              :pom-file (str class-dir "/META-INF/maven/" (namespace project) "/" (name project) "/pom.xml")})
+              :pom-file (format "%s/META-INF/maven/%s/%s/pom.xml"
+                                class-dir
+                                (if (namespace project) (namespace project) (name project))
+                                (name project))})
   (println "Deployed!"))

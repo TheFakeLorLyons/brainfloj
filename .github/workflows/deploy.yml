@@ -94,7 +94,7 @@ jobs:
         mkdir -p lib
         touch lib/brainflow-jar-with-dependencies.jar
         
-    - name: Build uber JAR
+    - name: Build JAR
       run: clojure -T:build uber
       
     - name: Upload release artifact
