@@ -16,6 +16,21 @@
 (def target-dir "target")
 (def native-lib-dir "lib/native")
 
+(def include-paths
+  [#"^src/.*$"
+   #"^resources/public/floj/.*$"
+   #"^resources/public/fonts/.*$"])
+
+(def exclude-paths
+  [#".*\.lor$"
+   #"recording_metadata\.edn$"
+   #"calibration\.edn$"
+   #"tags\.edn$"
+   #"^lib/native/.*$"
+   #"\.git/.*$"
+   #"\.github/.*$"])
+
+
 (defn clean [_]
   (println "Cleaning target directories...")
   (b/delete {:path target-dir})
