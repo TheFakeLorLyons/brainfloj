@@ -1,6 +1,7 @@
 (ns build
   (:require [clojure.tools.build.api :as b]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [deps-deploy.deps-deploy :as dd]))
 
 ;;; See also https://clojure.org/guides/tools_build
 ;;; To install jar:  clj -T:build jar
@@ -105,9 +106,7 @@
 (defn deploy [_]
   (println "Deploying to Clojars...")
   (jar nil)
-  (b/deploy {:installer :remote
-             :lib project
-             :version version
-             :jar-file jar-file
-             :pom-file (str class-dir "/META-INF/maven/" (namespace project) "/" (name project) "/pom.xml")})
+  (dd/deploy {:installer :remote
+              :artifact jar-file
+              :pom-file (str class-dir "/META-INF/maven/" (namespace project) "/" (name project) "/pom.xml")})
   (println "Deployed!"))
