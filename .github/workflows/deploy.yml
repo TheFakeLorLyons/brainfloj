@@ -65,16 +65,6 @@ jobs:
     - name: Run tests
       run: clojure -T:build test || echo "No tests yet"
       
-    - name: Build JAR
-      run: clojure -T:build jar
-      
-    - name: Upload JAR artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: brainfloj-jar
-        path: target/classes/*.jar
-        if-no-files-found: error
-        
   publish:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
