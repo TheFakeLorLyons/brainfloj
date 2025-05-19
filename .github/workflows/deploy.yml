@@ -89,11 +89,6 @@ jobs:
         mkdir -p lib/native
         touch lib/native/.keep
         
-    - name: Create mock brainflow JAR
-      run: |
-        mkdir -p lib
-        touch lib/brainflow-jar-with-dependencies.jar
-        
     - name: Build JAR
       run: clojure -T:build uber
       
