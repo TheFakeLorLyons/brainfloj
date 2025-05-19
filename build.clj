@@ -57,7 +57,8 @@
   (b/uber {:class-dir class-dir
            :uber-file uber-file
            :basis basis
-           :main 'brainfloj.core})
+           :main 'brainfloj.core
+           :classpath ["lib/brainflow-jar-with-dependencies.jar"]})
   (println (format "Uber JAR file created: %s" uber-file)))
 
 (defn verify-native-libs [_]
