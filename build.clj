@@ -35,7 +35,9 @@
                 :lib project
                 :version version
                 :basis basis
-                :src-dirs ["src"]})
+                :src-dirs ["src"]
+                :license {"MIT License"
+                          "https://opensource.org/licenses/MIT"}})
   (b/jar {:class-dir class-dir
           :jar-file jar-file})
   (println (format "JAR file created: %s" jar-file)))
