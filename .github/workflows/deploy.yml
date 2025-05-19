@@ -80,7 +80,7 @@ jobs:
         distribution: 'temurin'
         
     - name: Setup Clojure
-      uses: DeLaGuardo/setup-clojure@12.1
+      uses: DeLaGuardo/setup-clojure@13.2
       with:
         cli: latest
         
