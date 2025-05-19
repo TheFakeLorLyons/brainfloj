@@ -41,10 +41,6 @@ jobs:
       run: |
         mkdir -p lib/native
         touch lib/native/.keep
-        
-    - name: Copy BrainFlow JAR
-      run: |
-        cp /lib/brainflow-jar-with-dependencies.jar lib/
 
     - name: Verify native libs
       run: clojure -T:build verify-native-libs
