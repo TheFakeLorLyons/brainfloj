@@ -37,8 +37,11 @@
                 :basis basis
                 :src-dirs ["src"]
                 :scm {:url "https://github.com/thefakelorlyons/brainfloj"}
-                :licenses {"MIT License"
-                           "https://opensource.org/licenses/MIT"}})
+                [[:licenses
+                  [:license
+                   [:name "MIT License"]
+                   [:url "https://opensource.org/licenses/MIT"]
+                   [:distribution "repo"]]]]})
   (b/jar {:class-dir class-dir
           :jar-file jar-file})
   (println (format "JAR file created: %s" jar-file)))
