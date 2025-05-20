@@ -68,11 +68,11 @@
           (recur))))))
 
 (defn -main []
-    (log/redirect-system-output!)
+  (log/redirect-system-output!)
   (System/setProperty "jna.debug_load" "false")
   (System/setProperty "jna.debug_load.jna" "false")
   (System/setProperty "jna.nosys" "true")
-  
+
   (initialize-application!)
   (let [_ (mount/start)]
     (cli-program state/shim)

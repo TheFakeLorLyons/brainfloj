@@ -8,3 +8,5 @@ js
 node_modules
 lib/native/*
 !native/compiled-libs.tar
+examples/Pong/lib/
+examples/Pong/.cpcache/
