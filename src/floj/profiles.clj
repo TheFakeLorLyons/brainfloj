@@ -254,15 +254,30 @@
          :bci-device {}
          :golden-tensor {}}))))
 
+(defn count-profile-recordings
+  "Count the total number of recordings for a profile"
+  [profile-name]
+  (try
+    (let [profile-dir (str (:get-active-profile @state/state) "/recordings")
+          recording-files (when (.exists (io/file profile-dir))
+                            (->> (file-seq (io/file profile-dir))
+                                 (filter #(.isDirectory %))
+                                 (filter #(not= (.getName %) "recordings"))))]
+      (count recording-files))
+    (catch Exception e
+      (println "Error counting profile recordings:" (.getMessage e))
+      0)))
+
 (defn show-current-profile []
   (let [active-profile (get-active-profile)]
     (println "Current active profile:" (:name active-profile))))
 
 (defn initialize-profiles! []
-  (state/register-fn!   :create-profile!      create-profile!)
-  (state/register-fn!   :set-default-profile! set-default-profile!)
-  (state/register-fn!   :save-profile!        save-profile!)
-  (state/register-fn!   :load-profile         load-profile)
-  (state/register-fn!   :switch-profile!      switch-profile!)
-  (state/register-fn!   :delete-profile!      delete-profile!)
-  (state/register-fn!   :get-active-profile   get-active-profile))
+  (state/register-fn!   :create-profile!          create-profile!)
+  (state/register-fn!   :set-default-profile!     set-default-profile!)
+  (state/register-fn!   :save-profile!            save-profile!)
+  (state/register-fn!   :load-profile             load-profile)
+  (state/register-fn!   :switch-profile!          switch-profile!)
+  (state/register-fn!   :delete-profile!          delete-profile!)
+  (state/register-fn!   :get-active-profile       get-active-profile)
+  (state/register-fn!   :count-profile-recordings count-profile-recordings))

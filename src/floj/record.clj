@@ -45,10 +45,10 @@
 
 (defn process-calibration
   "Complete calibration pipeline with dynamic target distribution"
-  [raw-data sampling-rate profile-name]
+  [raw-data sampling-rate profile]
   (try
     (println "Starting calibration process with" (count raw-data) "data points")
-    (let [profile ((:load-profile @state/state) profile-name)
+    (let [profile-name (:name profile)
           
           recent-calibrations (calibrate/load-recent-calibrations profile-name 5)
           ; Extract dynamic target from profile
@@ -96,13 +96,13 @@
     (when (> (- current-time last-update) 5000)
       (reset! last-calibration-update current-time)
       (let [recent-data @state/eeg-data
-            profile-name (or (:name ((:get-active-profile @state/state))) "default")
+            profile ((:get-active-profile @state/state))
             sampling-rate (brainflow/get-sampling-rate (brainflow/get-board-id @state/shim))
 
             new-calibration-index (process-calibration
                                    recent-data
                                    sampling-rate
-                                   profile-name)]
+                                   profile)]
 
         (when new-calibration-index
           (lor/update-metadata-calibration!
