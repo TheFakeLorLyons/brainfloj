@@ -3,6 +3,7 @@
             [floj.brainflow.wavelet-types :as wavelet-types])
   (:import [brainflow DataFilter FilterTypes WindowOperations]
            [com.sun.jna Native Library]
+           [java.util Arrays]
            [org.apache.commons.math3.complex Complex]
            [org.apache.commons.math3.transform FastFourierTransformer DftNormalization TransformType]))
 
@@ -44,13 +45,13 @@
   "Process a single EEG channel for FFT analysis, ensuring proper data format"
   [channel-data]
   (when (seq channel-data)
-    ;; Ensure we have a flat vector of doubles
+    ; Ensure we have a flat vector of doubles
     (let [flattened (if (and (sequential? channel-data)
                              (number? (first channel-data)))
-                      channel-data  ;; Already 1D vector
-                      (vec (flatten channel-data)))  ;; Flatten to 1D
+                      channel-data  ; Already 1D vector
+                      (vec (flatten channel-data)))  ; Flatten to 1D
 
-          ;; Apply the FFT
+          ; Apply the FFT
           [real-parts imag-parts] (perform-fft flattened)]
 
       [real-parts imag-parts])))
@@ -60,12 +61,13 @@
   [fft-data data-len]
   (try
     (let [[real-parts imag-parts] fft-data
-          ;; Check if we have valid data
+          
+          ; Check if we have valid data
           valid-data? (and (seq real-parts)
                            (seq imag-parts)
                            (= (count real-parts) (count imag-parts)))
 
-          ;; Make sure we have enough data
+          ; Make sure we have enough data
           complex-array (when valid-data?
                           (into-array Complex
                                       (map (fn [r i]
@@ -80,6 +82,75 @@
     (catch Exception e
       (println "Error performing IFFT:" (.getMessage e))
       (vec (repeat data-len 0.0)))))
+
+(defn compute-wavelet-features
+  "Compute wavelet features for EEG data using BrainFlow's wavelet transform"
+  [raw-data sampling-rate]
+  (when (seq raw-data)
+    (try
+      (let [flat-data (if (and (sequential? raw-data) (number? (first raw-data))) ; Ensure data is properly formatted
+                        raw-data
+                        (flatten raw-data))
+
+            ; Perform wavelet transform using BrainFlow's real implementation
+            ; (Uses Daubechies 4 wavelet with 3 decomposition levels)
+            wavelet-result (DataFilter/perform_wavelet_transform
+                            (double-array flat-data)
+                            (:db4 wavelet-types/wavelet-types)
+                            3
+                            (:symmetric wavelet-types/wavelet-extension-types))
+
+            ; Extract coefficients and their lengths
+            coefficients (.getLeft wavelet-result)
+            decomp-lengths (.getRight wavelet-result)
+
+            ; Calculate energies in each decomposition level
+            energies (let [total-sum (reduce + decomp-lengths)
+                           offset-indices (reductions + 0 decomp-lengths)
+                           bands (map-indexed
+                                  (fn [idx len]
+                                    (let [start (nth offset-indices idx)
+                                          end (+ start len)
+                                          band-coeffs (Arrays/copyOfRange coefficients start end)]
+                                      (/ (reduce + (map #(* % %) band-coeffs)) len)))
+                                  (take 5 decomp-lengths))]
+                       (zipmap [:delta :theta :alpha :beta :gamma] bands))]
+
+        {:coefficients (vec coefficients)
+         :energies energies})
+      (catch Exception e
+        (println "Error computing wavelet features:" (.getMessage e))
+        {:coefficients [], :energies {}}))))
+
+(defn compute-time-domain-stats
+  "Compute time domain statistics for EEG data"
+  [raw-data]
+  (try
+    (if (empty? raw-data)
+      {:channel-stats []}
+      (let [channel-count (count (first raw-data))
+            ; Transpose data to group by channel instead of by time
+            channels (apply map vector raw-data)
+
+            ; Use DataFilter for real processing
+            channel-stats (mapv (fn [channel]
+                                  (let [n (count channel)
+                                        data-array (double-array channel)
+                                        mean (/ (reduce + channel) n)
+                                        stddev (DataFilter/calc_stddev data-array 0 n)
+                                        min-val (apply min channel)
+                                        max-val (apply max channel)]
+                                    {:mean mean
+                                     :variance (* stddev stddev)
+                                     :std-dev stddev
+                                     :min min-val
+                                     :max max-val
+                                     :range (- max-val min-val)}))
+                                channels)]
+        {:channel-stats channel-stats}))
+    (catch Exception e
+      (println "Error computing time domain stats:" (.getMessage e))
+      {:channel-stats []})))
 
 ; Calculate power spectrum (amplitude squared)
 (defn calculate-power-spectrum
@@ -100,17 +171,17 @@
                               overlap nil
                               window-type :hanning}}]
   (try
-    ;; Ensure data is a flat sequence of doubles
+    ; Ensure data is a flat sequence of doubles
     (let [flat-data (cond
-                      ;; Already a flat sequence of numbers
+                      ; Already a flat sequence of numbers
                       (and (sequential? data) (number? (first data)))
                       (double-array data)
 
-                      ;; Nested vectors
+                      ; Nested vectors
                       (and (sequential? data) (sequential? (first data)))
                       (double-array (flatten data))
 
-                      ;; Single number (unlikely)
+                      ; Single number (unlikely)
                       (number? data)
                       (double-array [data])
 
@@ -119,28 +190,27 @@
                         (println "Warning: Unexpected data format in get-psd-welch:" (type data))
                         (double-array [])))
 
-          ;; Calculate appropriate nfft size if not provided
+          ; Calculate appropriate nfft size if not provided
           data-len (count flat-data)
-          calculated-nfft (cond
-                            ;; User provided nfft
-                            nfft nfft
+          calculated-nfft (cond     
+                            nfft nfft ; User provided nfft
 
-                            ;; Data too small, use power of 2 less than data length
+                            ; Data too small, use power of 2 less than data length
                             (< data-len 64)
                             (int (Math/pow 2 (Math/floor (/ (Math/log data-len) (Math/log 2)))))
 
-                            ;; Default to 256 for larger data
+                            ; Default to 256 for larger data
                             :else 256)
 
-          ;; Make sure nfft is valid
+          ; Make sure nfft is valid
           safe-nfft (if (>= calculated-nfft data-len)
                       (int (/ data-len 2)) ;; Safe fallback
                       calculated-nfft)
 
-          ;; Calculate default overlap if not provided
+          ; Calculate default overlap if not provided
           safe-overlap (or overlap (int (/ safe-nfft 2)))
 
-          ;; Get window code
+          ; Get window code
           window (if (keyword? window-type)
                    (get window-types window-type wavelet-types/wavelet-types)
                    window-type)
@@ -148,7 +218,7 @@
                         (.get_code window)
                         (int window))]
 
-      ;; Only proceed if we have enough data
+      ; Only proceed if we have enough data
       (if (< data-len 4)
         {:amplitudes [] :frequencies []}
         (let [psd-result (DataFilter/get_psd_welch flat-data safe-nfft safe-overlap sampling-rate window-code)]
@@ -163,15 +233,15 @@
   [data sampling-rate start-freq stop-freq]
   (try
     (let [flat-data (cond
-                      ;; Already a flat sequence of numbers
+                      ; Already a flat sequence of numbers
                       (and (sequential? data) (number? (first data)))
                       (double-array data)
 
-                      ;; Nested vectors
+                      ; Nested vectors
                       (and (sequential? data) (sequential? (first data)))
                       (double-array (flatten data))
 
-                      ;; Single number (unlikely)
+                      ; Single number (unlikely)
                       (number? data)
                       (double-array [data])
 
@@ -182,7 +252,7 @@
 
           data-len (count flat-data)]
 
-      ;; Only proceed if we have enough data
+      ; Only proceed if there exists enough data
       (if (< data-len 4)
         0.0
         (let [psd (get-psd-welch flat-data sampling-rate)

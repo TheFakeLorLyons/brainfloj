@@ -1,5 +1,5 @@
 (ns floj.brainflow.wavelet-types
-  (:import [brainflow WaveletTypes]))
+  (:import [brainflow WaveletTypes WaveletExtensionTypes]))
 
 (def wavelet-types
   {:haar WaveletTypes/HAAR
@@ -47,3 +47,7 @@
    :sym8 WaveletTypes/SYM8
    :sym9 WaveletTypes/SYM9
    :sym10 WaveletTypes/SYM10})
+
+(def wavelet-extension-types
+  {:symmetric WaveletExtensionTypes/SYMMETRIC
+   :periodic  WaveletExtensionTypes/PERIODIC})

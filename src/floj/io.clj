@@ -3,6 +3,31 @@
             [clojure.java.io :as io]
             [clojure.edn :as edn]))
 
+(defn file-exists?
+  "Check if a file exists"
+  [path]
+  (.exists (io/file path)))
+
+(defn dir-exists?
+  "Check if a directory exists at the given path"
+  [path]
+  (let [f (io/file path)]
+    (and (.exists f) (.isDirectory f))))
+
+(defn read-edn-file
+  "Read an EDN file"
+  [file-path]
+  (with-open [r (io/reader file-path)]
+    (edn/read (java.io.PushbackReader. r))))
+
+(defn list-subdirectories
+  "List subdirectories in a given directory"
+  [dir-path]
+  (let [dir (io/file dir-path)]
+    (->> (.listFiles dir)
+         (filter #(.isDirectory %))
+         (map #(.getName %)))))
+
 (defn config-base-dir
   "Get the base config directory path"
   []
@@ -79,14 +104,14 @@
   ([base-name]
    (create-recording-directory! base-name nil))
   ([base-name custom-name]
-  (let [timestamp (System/currentTimeMillis)
-        recordings-dir (get-recordings-dir)
-        dir-name (if custom-name
-                   (str base-name "/" custom-name "_" timestamp)
-                  (str recordings-dir "/" base-name "_" timestamp))
-        dir (io/file dir-name)]
-    (.mkdir dir)
-    dir-name)))
+   (let [timestamp (System/currentTimeMillis)
+         recordings-dir (get-recordings-dir)
+         dir-name (if custom-name
+                    (str base-name "/" custom-name "_" timestamp)
+                    (str recordings-dir "/" base-name "_" timestamp))
+         dir (io/file dir-name)]
+     (.mkdir dir)
+     dir-name)))
 
 (defn create-default-config!
   "Create a default configuration file if one doesn't exist"
