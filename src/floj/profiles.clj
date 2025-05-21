@@ -122,7 +122,16 @@
                                            :files []}}
         history-path (get-profile-history-path profile-name timestamp)]
     (spit history-path (pr-str new-profile))
-    (set-default-profile! profile-name)
+    (print "Would you like to set that as your default profile? (y/n) ")
+    (flush)
+    (let [profile-response (read-line)]
+      (when (= (str/lower-case (subs profile-response 0 1)) "y")
+        (set-default-profile! profile-name)
+        (print "Would you like to configure a new device? (y/n) ")
+        (flush)
+        (let [device-response (read-line)]
+          (when (= (str/lower-case (subs device-response 0 1)) "y")
+            ((:register-device @state/state))))))
     new-profile))
 
 (defn switch-profile! []
