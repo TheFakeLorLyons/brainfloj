@@ -6,37 +6,6 @@
    [brain-pong.game-state :as pong-state]
    [brain-pong.bci-integration :as bci]))
 
-#_(e/defn ConnectionIndicator []
-    (e/client
-     (let [state (e/watch pong-state/state)
-           connected? (get-in state [:bci :device-connected?])]
-       (dom/div
-        (dom/props {:class (str "connection-indicator " (if connected? "connected" "disconnected"))})
-        (dom/span
-         (dom/props {:class "indicator-dot"})
-         (dom/text (if connected? "Connected" "Disconnected")))))))
-
-#_(e/defn ConfidenceMeter [props]
-    (e/client
-     (let [label (:label props)
-           value (:value props)
-           bg-color (cljs.core/cond
-                      (> value 0.7) "#4CAF50"
-                      (> value 0.5) "#FFC107"
-                      :else "#F44336")
-           style {:width (str (* 100 value) "%")
-                  :background-color bg-color}]
-       (dom/div
-        (dom/props {:class "confidence-meter"})
-        (dom/div (dom/props {:class "label"}) (dom/text label))
-        (dom/div
-         (dom/props {:class "meter"})
-         (dom/div
-          (dom/props {:class "fill"
-                      :style style})))
-        (dom/div (dom/props {:class "value"})
-                 (dom/text (str (int (* 100 value)) "%")))))))
-
 (e/defn BrainConnectionStatus []
   (e/client
    (let [state (e/watch pong-state/state)
@@ -99,18 +68,33 @@
   (e/client
    (let [state (e/watch pong-state/state)]
      (when (get-in state [:bci :pending-connect])
-       (js/console.log "pending connect!")
+       (js/console.log "Initiating BCI connection!")
+       ;; First update the pending state to prevent multiple attempts
        (swap! pong-state/state assoc-in [:bci :pending-connect] false)
-       (e/server
-        (bci/connect-device-server))))))
+       ;; Then make the connection request
+       (let [result (e/server (bci/connect-device-server))]
+         (js/console.log "Connection result:" (clj->js result))
+         (when (:success result)
+           (swap! pong-state/state assoc-in [:bci :device-connected?] true)
+           (swap! pong-state/state assoc-in [:bci :active-profile] (:profile-name result)))
+         result)))))
 
 (e/defn DisconnectWhenPending []
   (e/client
    (let [state (e/watch pong-state/state)]
      (when (get-in state [:bci :pending-disconnect])
-       (js/console.log "DisconnectWhenPending running")
+       (js/console.log "Initiating BCI disconnection")
+       ;; First update the pending state to prevent multiple attempts
        (swap! pong-state/state assoc-in [:bci :pending-disconnect] false)
-       (bci/disconnect-device!)))))
+       ;; Then make the disconnection request
+       (e/server (bci/disconnect-device-server))
+       ;; Update local state immediately (don't wait for status checker)
+       (swap! pong-state/state assoc-in [:bci :device-connected?] false)
+       (swap! pong-state/state assoc-in [:bci :active-profile] nil)
+       ;; Clear any active match interval
+       (when-let [interval (get-in @pong-state/state [:bci :match-interval])]
+         (js/clearInterval interval)
+         (swap! pong-state/state assoc-in [:bci :match-interval] nil))))))
 
 (e/defn BrainControls []
   (e/client
@@ -126,168 +110,163 @@
       (dom/button
        (dom/props {:class (str "bci-button " (if connected? "disconnect" "connect"))})
        (dom/text (if connected? "Disconnect Device" "Connect Device"))
-       (dom/On "click" (fn [_]
-                         (js/console.log "BCI button clicked, connected?" connected?)
-                         (if connected?
-                           #?(:cljs (bci/handle-disconnect-click))
-                           #?(:cljs (bci/handle-connect-click))))
+       (dom/On "click"
+               (fn [_]
+                 (swap! pong-state/state assoc-in
+                        [:bci (if connected? :pending-disconnect :pending-connect)]
+                        true))
                nil)
        (dom/text (str " " (get-in state [:bci :active-profile]))))))))
 
-#_(e/defn ThresholdAdjustment []
+(e/defn ThresholdAdjustment []
   (e/client
    (let [state (e/watch pong-state/state)
          threshold (get-in state [:bci :threshold] 0.6)
          sensitivity (get-in state [:bci :sensitivity] 0.5)]
-
      (dom/div
       (dom/props {:class "threshold-adjustment"})
-      (dom/h3 (dom/text "BCI Settings"))
+      (dom/h3 (dom/text "Fine Tuning"))
 
-       ;; Confidence threshold slider
+      ;; Threshold slider
       (dom/div
-       (dom/props {:class "slider-control"})
-       (dom/label
-        (dom/props {:for "threshold-slider"})
-        (dom/text "Confidence Threshold: " (.toFixed threshold 2)))
+       (dom/props {:class "slider-group"})
+       (dom/label (dom/text (str "Threshold: " (.toFixed threshold 2))))
        (dom/input
         (dom/props {:type "range"
-                    :id "threshold-slider"
-                    :min "0.1"
-                    :max "0.9"
-                    :step "0.05"
+                    :min 0.1
+                    :max 0.95
+                    :step 0.05
                     :value threshold})
-        (dom/On "input" (e/fn [e]
-                          (let [new-val (js/parseFloat (.. e -target -value))]
-                            (bci/update-threshold! new-val)))
+        (dom/On "input" (fn [e]
+                          (let [value (js/parseFloat (.. e -target -value))]
+                            (swap! pong-state/state assoc-in [:bci :threshold] value)))
                 nil)))
 
-       ;; Movement sensitivity slider
+      ;; Sensitivity slider
       (dom/div
-       (dom/props {:class "slider-control"})
-       (dom/label (dom/props {:for "sensitivity-slider"})
-                  (dom/text "Movement Sensitivity: " (.toFixed sensitivity 2)))
+       (dom/props {:class "slider-group"})
+       (dom/label (dom/text (str "Sensitivity: " (.toFixed sensitivity 2))))
        (dom/input
         (dom/props {:type "range"
-                    :id "sensitivity-slider"
-                    :min "0.1"
-                    :max "1.0"
-                    :step "0.05"
+                    :min 0.1
+                    :max 1.0
+                    :step 0.05
                     :value sensitivity})
-        (dom/On "input" (e/fn [e]
-                          (let [new-val (js/parseFloat (.. e -target -value))]
-                            (bci/update-sensitivity! new-val)))
+        (dom/On "input" (fn [e]
+                          (let [value (js/parseFloat (.. e -target -value))]
+                            (swap! pong-state/state assoc-in [:bci :sensitivity] value)))
                 nil)))))))
 
-
-#_(e/defn CalibrationButton []
+(e/defn CalibrationControl []
   (e/client
-   (dom/div
-    (dom/props {:class "calibration-control"})
-    (dom/button
-     (dom/props {:class "calibration-button"})
-     (dom/text "Calibrate BCI Controls")
-     (dom/On "click" (e/fn [_]
-                       (dom/div
-                        (dom/props {:id "calibration-modal" :class "modal"})
-                        (dom/div
-                         (dom/props {:class "modal-content"})
-                         (dom/h2 (dom/text "BCI Calibration"))
-                         (dom/p (dom/text "First, we'll calibrate the UP movement:"))
-                         (dom/button
-                          (dom/props {:class "record-button"})
-                          (dom/text "Record UP Movement")
-                          (dom/On "click" (e/fn [_]
-                                            (bci/start-recording! "pong-up")
-                                            (js/setTimeout #(bci/stop-recording!) 5000))
-                                  nil))
-                         (dom/p (dom/text "Next, we'll calibrate the DOWN movement:"))
-                         (dom/button
-                          (dom/props {:class "record-button"})
-                          (dom/text "Record DOWN Movement")
-                          (dom/On "click" (e/fn [_]
-                                            (bci/start-recording! "pong-down")
-                                            (js/setTimeout #(bci/stop-recording!) 5000))
-                                  nil))
-                         (dom/button
-                          (dom/props {:class "close-button"})
-                          (dom/text "Close")
-                          (dom/On "click" (e/fn [_]
-                                            (let [modal (js/document.getElementById "calibration-modal")]
-                                              (set! (.. modal -style -display) "none")))
-                                  nil)))))
-             nil)))))
+   (let [state (e/watch pong-state/state)
+         connected? (get-in state [:bci :device-connected?])
+         recording? (get-in state [:bci :recording?])
+         current-category (get-in state [:bci :current-category])
+         matching? (get-in state [:bci :matching?])]
+     (dom/div
+      (dom/props {:class "calibration-controls"})
+      (dom/h3 (dom/text "Brain Calibration"))
 
-;; Brain Calibration Component
-#_ (e/defn CalibrationControl []
-   (e/client
-    (let [state (e/watch pong-state/state)
-          connected? (get-in state [:bci :device-connected?])
-          recording? (get-in state [:bci :recording?])
-          current-category (get-in state [:bci :current-category])]
-
+      ;; Calibration instructions
       (dom/div
-       (dom/props {:class "calibration-control"})
-       (dom/h3 (dom/text "Calibration"))
+       (dom/props {:class "calibration-instructions"})
+       (dom/text "Record your brain patterns while thinking about moving the paddle up or down."))
 
-      ; Only show calibration controls if connected
-       (if connected?
-         (dom/div
-         ; If not recording, show start recording buttons
-          (if-not recording?
-            (dom/div
-             (dom/props {:class "recording-buttons"})
-             (dom/button
-              (dom/props {:class "calibration-button up-calib"})
-              (dom/text "Record UP Pattern")
-              (dom/On "click" (e/fn [_]
-                                (bci/start-recording! "pong-up"))
-                      nil))
+      ;; "Up" recording button
+      (dom/div
+       (dom/props {:class "recording-button-group"})
+       (dom/button
+        (dom/props {:class (str "recording-button up-button"
+                                (when (and recording? (= current-category "up")) " active"))
+                    :disabled (or (not connected?) (and recording? (not= current-category "up")))})
+        (dom/text (if (and recording? (= current-category "up")) "Stop Recording Up" "Record Up"))
+        (dom/On "click" (fn [_]
+                          (if (and recording? (= current-category "up"))
+                            (bci/stop-recording!)
+                            (bci/start-recording! "up")))
+                nil))
 
-             (dom/button
-              (dom/props {:class "calibration-button down-calib"})
-              (dom/text "Record DOWN Pattern")
-              (dom/On "click" (e/fn [_]
-                                (bci/start-recording! "pong-down"))
-                      nil)))
+       ;; "Down" recording button  
+       (dom/button
+        (dom/props {:class (str "recording-button down-button"
+                                (when (and recording? (= current-category "down")) " active"))
+                    :disabled (or (not connected?) (and recording? (not= current-category "down")))})
+        (dom/text (if (and recording? (= current-category "down")) "Stop Recording Down" "Record Down"))
+        (dom/On "click" (fn [_]
+                          (if (and recording? (= current-category "down"))
+                            (bci/stop-recording!)
+                            (bci/start-recording! "down")))
+                nil)))
 
-           ; If recording, show stop button
-            (dom/div
-             (dom/props {:class "recording-status-control"})
-             (dom/p
-              (dom/props {:class "recording-text"})
-              (dom/text "Recording " current-category " pattern..."))
-             (dom/p
-              (dom/props {:class "recording-instruction"})
-              (dom/text "Think about moving the paddle "
-                        (if (= current-category "pong-up") "UP" "DOWN")
-                        " while recording"))
-             (dom/button
-              (dom/props {:class "stop-recording-button"})
-              (dom/text "Stop Recording")
-              (dom/On "click" (e/fn [_]
-                                (bci/stop-recording!))
-                      nil)))))
+      ;; Start/Stop brain activity matching
+      (dom/div
+       (dom/props {:class "matching-controls"})
+       (dom/button
+        (dom/props {:class (str "matching-button" (when matching? " active"))
+                    :disabled (not connected?)})
+        (dom/text (if matching? "Stop Brain Control" "Start Brain Control"))
+        (dom/On "click" (fn [_]
+                          (if matching?
+                            (bci/stop-activity-matching!)
+                            (bci/start-activity-matching!)))
+                nil)))))))
 
-        ; Not connected - show message
-         (dom/p
-          (dom/props {:class "calibration-message"})
-          (dom/text "Connect a BCI device to calibrate")))))))
-
-; Combined BCI Panel
 (e/defn BCIPanel []
   (e/client
-   ; Initialize BCI on component mount
-   #_(e/server (bci/initialize-bci!))
-
    (dom/div
     (dom/props {:class "bci-panel"})
     (dom/h2 (dom/text "Brain-Computer Interface"))
-    #_(dom/text (e/server (:name (profiles/get-active-profile))));example
     (BrainConnectionStatus)
     (BrainControls)
     #_(CalibrationControl)
     #_(ThresholdAdjustment))))
+
+(e/defn BrainSignalVisualization []
+  (e/client
+   (let [state (e/watch pong-state/state)
+         connected? (get-in state [:bci :device-connected?])
+         confidence (get-in state [:bci :confidence] {:up 0.0 :down 0.0})
+         threshold (get-in state [:bci :threshold] 0.6)]
+     
+     (when connected?
+       (dom/div
+        (dom/props {:class "brain-signal-viz"})
+        (dom/h3 (dom/text "Brain Signal"))
+        
+        ;; Signal bars visualization
+        (dom/div 
+         (dom/props {:class "signal-bars"})
+         
+         ;; Up signal
+         (dom/div
+          (dom/props {:class "signal-bar"})
+          (dom/div
+           (dom/props {:class "bar-label"})
+           (dom/text "Up"))
+          (dom/div
+           (dom/props {:class "bar-container"})
+           (dom/div
+            (dom/props {:class (str "bar-fill" (when (>= (:up confidence) threshold) " active"))
+                        :style (str "width: " (* 100 (:up confidence)) "%")}))
+           (dom/div
+            (dom/props {:class "threshold-marker"
+                        :style (str "left: " (* 100 threshold) "%")}))))
+         
+         ;; Down signal
+         (dom/div
+          (dom/props {:class "signal-bar"})
+          (dom/div
+           (dom/props {:class "bar-label"})
+           (dom/text "Down"))
+          (dom/div
+           (dom/props {:class "bar-container"})
+           (dom/div
+            (dom/props {:class (str "bar-fill" (when (>= (:down confidence) threshold) " active"))
+                        :style (str "width: " (* 100 (:down confidence)) "%")}))
+           (dom/div
+            (dom/props {:class "threshold-marker"
+                        :style (str "left: " (* 100 threshold) "%")}))))))))))
 
 (e/defn SimpleStartButton []
   (e/client
@@ -386,38 +365,88 @@
 
 (e/defn Instructions []
   (e/client
-   (dom/div
-    (dom/props {:class "instructions"})
-    (dom/h3 (dom/text "How to Play"))
-    (dom/ul
-     (dom/li (dom/text "Use ↑ and ↓ arrow keys to move your paddle"))
-     (dom/li (dom/text "First to 5 points wins"))
-     (dom/li (dom/text "Click 'Start Game' to begin"))))))
+   (let [state (e/watch pong-state/state)
+         connected? (get-in state [:bci :device-connected?])
+         active-profile (get-in state [:bci :active-profile])
+         matching? (get-in state [:bci :matching?])]
+     (dom/div
+      (dom/props {:class "instructions"})
+      (dom/h2 (dom/text "Brain-Controlled Pong"))
+
+      ;; Game Instructions
+      (dom/div
+       (dom/props {:class "game-instructions"})
+       (dom/h3 (dom/text "How to Play"))
+       (dom/p (dom/text "Control the paddle on the right side to hit the ball. Score by making the ball pass the AI paddle on the left."))
+
+       (if connected?
+         ;; BCI control instructions when connected
+         (dom/div
+          (dom/props {:class "bci-instructions"})
+          (dom/p (dom/text (str "Connected to BCI device with profile: " active-profile)))
+          (if matching?
+            (dom/div
+             (dom/p (dom/text "Brain control is ACTIVE!"))
+             (dom/p (dom/text "Think about moving UP to move the paddle up"))
+             (dom/p (dom/text "Think about moving DOWN to move the paddle down"))
+             (dom/p (dom/text "You can adjust sensitivity and threshold in the controls panel")))
+            (dom/div
+             (dom/p (dom/text "Click 'Start Brain Control' to control with your mind"))
+             (dom/p (dom/text "First, use the calibration tools to record your brain patterns")))))
+
+         ;; Keyboard fallback when not connected
+         (dom/div
+          (dom/props {:class "keyboard-instructions"})
+          (dom/p (dom/text "Currently using keyboard controls:"))
+          (dom/ul
+           (dom/li (dom/text "↑ Up Arrow: Move paddle up"))
+           (dom/li (dom/text "↓ Down Arrow: Move paddle down")))
+          (dom/p (dom/text "Connect your BCI device to control with your mind!")))))))))
 
 (e/defn DebugPanel []
-  (e/client
-   (let [state (e/watch pong-state/state)
-         playing? (get-in state [:game :playing?])
-         keys-pressed (:keys-pressed state)]
-     (dom/div
-      (dom/props {:class "debug-panel"
-                  :style {:position "fixed"
-                          :bottom "10px"
-                          :left "10px"
-                          :background "rgba(0,0,0,0.7)"
-                          :color "white"
-                          :padding "10px"
-                          :border-radius "5px"
-                          :font-family "monospace"
-                          :z-index "1000"}})
-      (dom/h4 (dom/text "Debug Info"))
-      (dom/div (dom/text (str "Game Playing: " playing?)))
-      (dom/div (dom/text (str "Keys Pressed: " (pr-str keys-pressed))))
-      (dom/div (dom/text (str "Ball Position: ("
-                              (get-in state [:game :ball :x])
-                              ", "
-                              (get-in state [:game :ball :y])
-                              ")")))))))
+   (e/client
+    (let [state (e/watch pong-state/state)
+          debug-visible? (or (get-in state [:app :debug-visible?]) false)]
+
+      (dom/div
+       (dom/props {:class "debug-panel-toggle"})
+       (dom/button
+        (dom/text (if debug-visible? "Hide Debug" "Show Debug"))
+        (dom/On "click" (fn [_]
+                          (swap! pong-state/state update-in [:app :debug-visible?] not))
+                nil)))
+
+      (when debug-visible?
+        (dom/div
+         (dom/props {:class "debug-panel"})
+         (dom/h3 (dom/text "Debug Information"))
+
+        ;; BCI Information
+         (dom/div
+          (dom/props {:class "debug-section"})
+          (dom/h4 (dom/text "BCI State"))
+          (dom/pre
+           (dom/text (str "Device Connected: " (get-in state [:bci :device-connected?])
+                          "\nActive Profile: " (get-in state [:bci :active-profile])
+                          "\nRecording: " (get-in state [:bci :recording?])
+                          "\nCurrent Category: " (get-in state [:bci :current-category])
+                          "\nMatching Active: " (get-in state [:bci :matching?])
+                          "\nThreshold: " (get-in state [:bci :threshold])
+                          "\nSensitivity: " (get-in state [:bci :sensitivity])
+                          "\nUp Confidence: " (get-in state [:bci :confidence :up])
+                          "\nDown Confidence: " (get-in state [:bci :confidence :down])))))
+
+        ;; Game Information
+         (dom/div
+          (dom/props {:class "debug-section"})
+          (dom/h4 (dom/text "Game State"))
+          (dom/pre
+           (dom/text (str "Playing: " (get-in state [:game :playing?])
+                          "\nScore - Player: " (get-in state [:game :score :player])
+                          "\nScore - AI: " (get-in state [:game :score :ai])))))
+
+        ;; Brain Signal Visualization
+         (BrainSignalVisualization))))))
 
 #_(e/defn StateDebugging []
     (e/client
@@ -453,29 +482,3 @@
                            (js/console.log "Forced game start, state:"
                                            (pr-str (get-in @pong-state/state [:game :playing?]))))
                  nil))))))
-
-#_(e/defn Pong []
-    (e/client
-     (let [state (e/watch pong-state/state)
-           !current-screen (:current-screen (:app state))
-           current-screen (e/watch !current-screen)
-
-           menu-actions {:start-game (e/fn []
-                                       (reset! !current-screen :game)
-                                       (reset-game!)
-                                       (start-game!))
-                         :show-bci-setup #(reset! !current-screen :bci-setup)
-                         :show-instructions #(reset! !current-screen :instructions)
-                         :exit-game #(js/console.log "Exit game - not applicable in browser")}]
-       (dom/div
-        (dom/props {:class "bci-pong"})
-        (dom/h1 (dom/text "BCI Pong Game"))
-
-        (case current-screen
-          :main-menu (MainScreen menu-actions)
-          :game (GameScreen #(reset! !current-screen :main-menu))
-           ; :bci-setup (DeviceConnectionPanel #(reset! !current-screen :main-menu))
-          :instructions (InstructionsScreen #(reset! !current-screen :main-menu))
-
-           ; Default fallback
-          (MainScreen menu-actions))))))

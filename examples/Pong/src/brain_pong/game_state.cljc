@@ -304,6 +304,81 @@
    (defn handle-key-down [e]
      (println "Key down event - server-side implementation")))
 
+#_#?(:cljs
+    (defn game-loop-tick!
+      "Process one frame of the game logic"
+      []
+      (let [{:keys [ball player-paddle ai-paddle court]} (:game @state)]
+       ;; Update ball position
+        (swap! state update-in [:game :ball :x] + (get-in ball [:velocity :x]))
+        (swap! state update-in [:game :ball :y] + (get-in ball [:velocity :y]))
+
+       ;; Ball collision with top/bottom walls
+        (when (or (<= (- (:y ball) (:radius ball)) 0)
+                  (>= (+ (:y ball) (:radius ball)) (:height court)))
+          (swap! state update-in [:game :ball :velocity :y] -))
+
+       ;; Ball collision with paddles
+        (let [updated-ball (get-in @state [:game :ball])]
+         ;; Player paddle collision
+          (when (and (<= (- (:x updated-ball) (:radius updated-ball)) (+ (:x player-paddle) (:width player-paddle)))
+                     (>= (- (:x updated-ball) (:radius updated-ball)) (:x player-paddle))
+                     (>= (+ (:y updated-ball) (:radius updated-ball)) (:y player-paddle))
+                     (<= (- (:y updated-ball) (:radius updated-ball)) (+ (:y player-paddle) (:height player-paddle))))
+            (swap! state update-in [:game :ball :velocity :x] -)
+           ;; Slightly randomize y velocity on paddle hit for variety
+            (let [random-factor (- (rand) 0.5)]
+              (swap! state update-in [:game :ball :velocity :y] + random-factor)))
+
+         ;; AI paddle collision
+          (when (and (>= (+ (:x updated-ball) (:radius updated-ball)) (:x ai-paddle))
+                     (<= (+ (:x updated-ball) (:radius updated-ball)) (+ (:x ai-paddle) (:width ai-paddle)))
+                     (>= (+ (:y updated-ball) (:radius updated-ball)) (:y ai-paddle))
+                     (<= (- (:y updated-ball) (:radius updated-ball)) (+ (:y ai-paddle) (:height ai-paddle))))
+            (swap! state update-in [:game :ball :velocity :x] -)
+           ;; Slightly randomize y velocity on paddle hit
+            (let [random-factor (- (rand) 0.5)]
+              (swap! state update-in [:game :ball :velocity :y] + random-factor))))
+
+       ;; Simple AI paddle movement
+        (let [updated-ball (get-in @state [:game :ball])
+              ai-y (+ (:y ai-paddle) (/ (:height ai-paddle) 2))
+              ball-y (:y updated-ball)
+              ai-speed 3]
+          (cond
+            (< ai-y (- ball-y 10))
+            (swap! state update-in [:game :ai-paddle :y] + ai-speed)
+
+            (> ai-y (+ ball-y 10))
+            (swap! state update-in [:game :ai-paddle :y] - ai-speed)))
+
+       ;; Keep AI paddle within court bounds
+        (swap! state update-in [:game :ai-paddle :y]
+               (fn [y] (max 0 (min (- (:height court) (:height ai-paddle)) y))))
+
+       ;; Check if ball goes out of bounds (scoring)
+        (let [updated-ball (get-in @state [:game :ball])]
+          (cond
+           ;; AI scores
+            (<= (:x updated-ball) 0)
+            (do
+              (swap! state update-in [:game :score :ai] inc)
+              (swap! state assoc-in [:game :ball]
+                     {:x 300
+                      :y 200
+                      :radius 10
+                      :velocity {:x -3 :y 2}}))
+
+           ;; Player scores
+            (>= (:x updated-ball) (:width court))
+            (do
+              (swap! state update-in [:game :score :player] inc)
+              (swap! state assoc-in [:game :ball]
+                     {:x 300
+                      :y 200
+                      :radius 10
+                      :velocity {:x 3 :y 2}})))))))
+
 #?(:cljs
    (defn handle-key-up [e]
      (let [key (.-key e)]
