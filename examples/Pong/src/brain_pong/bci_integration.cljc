@@ -1,9 +1,8 @@
 (ns brain-pong.bci-integration
   (:require [hyperfiddle.electric3 :as e]
             [brain-pong.game-state :as pong-state]
-            [brain-pong.signature :as signature]
             [hyperfiddle.electric-dom3 :as dom]
-            #?(:clj [mount.core :as mount])
+            [brain-pong.signature :as signature]
             #?(:clj [floj.api :as api])
             #?(:clj [floj.state :as state])
             #?(:clj [floj.io :as fio])
@@ -13,73 +12,50 @@
             #?(:clj [floj.calibration :as calibrate])
             #?(:clj [floj.record :as record])
             #?(:clj [floj.wave-refraction :as refraction])
-            #?(:clj [floj.keybindings :as kb])
-            #?(:clj [floj.brainflow.board-shim :as brainflow])))
-
-#?(:clj (def modules-initialized? (atom false)))
+            #?(:clj [floj.keybindings :as kb])))
 
 #?(:clj
    (defn initialize-modules! []
-     (when-not @modules-initialized?
-       (println "Server: Initializing BCI modules")
-       (try
-         (api/initialize-brainflow!)
-         (fio/initialize-io!)
-         (lor/initialize-lor!)
-         (kb/initialize-keybindings!)
-         (profiles/initialize-profiles!)
-         (lexi/initialize-lexicon!)
-         (record/initialize-record!)
-         (calibrate/initialize-calibration!)
-         (refraction/initialize-baseline!)
-
-         ;; Add debugging for active profile
-         (when-let [profile ((:get-active-profile @state/state))]
-           (println "Active profile after initialization:" (:name profile))
-           (println "BCI device in profile:" (:bci-device profile)))
-
-         (reset! modules-initialized? true)
-         (println "Server: All BCI modules initialized successfully")
-         (catch Exception e
-           (println "Error initializing modules:" (.getMessage e))
-           (.printStackTrace e))))))
+     (api/initialize-brainflow!)
+     (fio/initialize-io!)
+     (lor/initialize-lor!)
+     (kb/initialize-keybindings!)
+     (profiles/initialize-profiles!)
+     (lexi/initialize-lexicon!)
+     (record/initialize-record!)
+     (calibrate/initialize-calibration!)
+     (refraction/initialize-baseline!)))
 
 #?(:clj
    (defn connect-device-server []
-
-     (println "Server: Connecting to BCI device with active profile")
      (try
-       (if-let [profile ((:get-active-profile @state/state))]
-         (let [profile-name (:name profile)
-               _ (println "Profile name" (:name profile))
-               _ (println "Profile Device" (:bci-device profile))
-               success? (api/connect-from-profile! profile)]
-           (println "Connection result:" success? "with profile" profile-name)
-           {:success success? :profile-name profile-name})
-         (do
-           (println "No active profile found")
-           {:success false :error "No active profile found"}))
+       (initialize-modules!)
+       (println "Server: Connecting to BCI device with active profile")
+       (let [profile (profiles/get-active-profile)
+             profile-name (:name profile)
+             connected? (api/connect-from-profile! profile)]
+         (println "Connection result:" connected? "with profile" profile-name)
+         {:success connected? 
+          :profile-name profile-name})
        (catch Exception e
-         (println "Error connecting to device:" (.getMessage e))
+         (println "Error in connect-device-server:" (.getMessage e))
          {:success false :error (.getMessage e)}))))
 
-; Client functions for BCI integration
 (e/defn connect-device! []
   (e/client
    (let [result (e/server (connect-device-server))]
-     (when (:success result)
+     (when (:connected result)
        (js/console.log "Connection successful:" (:profile-name result))
        (swap! pong-state/state assoc-in [:bci :device-connected?] true)
        (swap! pong-state/state assoc-in [:bci :active-profile] (:profile-name result)))
      result)))
 
-; Add a pure client-side function for use in event handlers
-(e/defn handle-connect-click []
+(e/defn handle-connect-click [_]
   (e/client
    (js/console.log "Client-side connect click handler started")
    (let [result (e/server (connect-device-server))]
      (js/console.log "Server connection result:" (clj->js result))
-     (when (:success result)
+     (when (:connected result)
        (swap! pong-state/state assoc-in [:bci :device-connected?] true)
        (swap! pong-state/state assoc-in [:bci :active-profile] (:profile-name result)))
      result)))
@@ -91,21 +67,24 @@
        (try
          (when-let [f (:release-board! @state/state)]
            (f @state/shim))
-         true
+         {:success true}
          (catch Exception e
            (println "Error disconnecting:" (.getMessage e))
-           false)))))
+           {:success false :error (.getMessage e)})))))
+
 
 (e/defn disconnect-device! []
   (e/client
    (let [result (e/server (disconnect-device-server))]
-     (println "Client: Disconnect device result" result)
-     (when (:success result)
-       (swap! pong-state/state assoc-in [:bci :device-connected?] false)
-       (swap! pong-state/state assoc-in [:bci :active-profile] nil)
-       (when-let [interval (get-in @pong-state/state [:bci :match-interval])]
-         (js/clearInterval interval)
-         (swap! pong-state/state assoc-in [:bci :match-interval] nil)))
+     (js/console.log "Disconnect result:" (clj->js result))
+     (swap! pong-state/state update-in [:bci] merge
+            {:device-connected? false
+             :active-profile nil
+             :matching? false})
+     ; Clear any running intervals
+     (when-let [interval (get-in @pong-state/state [:bci :match-interval])]
+       (js/clearInterval interval)
+       (swap! pong-state/state assoc-in [:bci :match-interval] nil))
      result)))
 
 (e/defn handle-disconnect-click []
@@ -119,25 +98,21 @@
 #?(:clj
    (defn get-device-status-server []
      (try
-       (initialize-modules!)
-       (when-not (empty (mount/running-states))
-         (mount/start))
-       (let [connected? (brainflow/board-ready? @state/shim)]
+       (let [connected? (boolean @state/shim)]
          {:connected connected?
           :profile-name (when connected? (:name ((:get-active-profile @state/state))))})
        (catch Exception e
          (println "Error getting device status:" (.getMessage e))
          {:connected false :error (.getMessage e)}))))
-
-;; Check device status
 (e/defn check-device-status! []
   (e/client
    (let [status (e/server (get-device-status-server))]
-     (js/console.log "Device status:" (clj->js status))
-     ;; Update state with device status
-     (when (not= (get-in @pong-state/state [:bci :device-connected?]) (:connected status))
-       (swap! pong-state/state assoc-in [:bci :device-connected?] (:connected status))
-       (swap! pong-state/state assoc-in [:bci :active-profile] (:profile-name status))))))
+     (js/console.log "Device status received:" (clj->js status))
+     (when status
+       (swap! pong-state/state update-in [:bci] merge
+              {:device-connected? (:connected status)
+               :active-profile (:profile-name status)}))
+     status)))
 
 
 #?(:clj
@@ -153,20 +128,20 @@
    (defn stop-recording-server []
      (try
        (lexi/stop-wave-signature-recording!)
+        {:success true}
        (catch Exception e
          (println "Error stopping recording:" (.getMessage e))
-         nil))))
+         {:success false :error (.getMessage e)}))))
 
 (e/defn start-recording! [category]
   (e/client
    (js/console.log "Client: Starting recording for category:" category)
-    (let [session-id (e/server (start-recording-server category))]
-      (when session-id
+    (let [result (e/server (start-recording-server category))]
+      (when (:success result)
         (swap! pong-state/state assoc-in [:bci :recording?] true)
         (swap! pong-state/state assoc-in [:bci :current-category] category))
-      session-id)))
+      result)))
 
-;; Modify the stop-recording! function similarly
 (e/defn stop-recording! []
   (e/client
    (js/console.log "Client: Stopping recording")
@@ -187,13 +162,11 @@
 #?(:cljs
    (defn handle-start-recording! [category]
      (js/console.log "Handle start recording for category:" category)
-     ;; Set up pending state for Electric to pick up
      (swap! pong-state/state assoc-in [:bci :pending-record] category)))
 
 #?(:cljs
    (defn handle-stop-recording! []
      (js/console.log "Handle stop recording")
-     ;; Set up pending state for Electric to pick up
      (swap! pong-state/state assoc-in [:bci :pending-stop-record] true)))
 
 #?(:cljs
@@ -265,27 +238,26 @@
 
 (e/defn PollBrainActivity []
   (e/client
-   ;; This triggers the function to run on every animation frame
+   ; This triggers the function to run on every animation frame
    (let [_ (dom/on-animation-frame)
          state (e/watch pong-state/state)
          matching? (get-in state [:bci :matching?])]
 
-     ;; Only poll for brain activity when matching is active
+     ; Only poll for brain activity when matching is active
      (when matching?
-       ;; Get confidence data from server - this automatically runs when needed
+       ; Get confidence data from server - this automatically runs when needed
        (let [confidence-data (get-confidence-data)]
          (when confidence-data
            (js/console.log "Received confidence data:" (clj->js confidence-data))
            (swap! pong-state/state assoc-in [:bci :confidence] confidence-data)
 
-           ;; Apply paddle movement based on confidence
+           ; Apply paddle movement based on confidence
            (process-bci-input!)))))))
 
 (e/defn start-activity-matching! []
   (e/client
    (println "Client: Starting brain activity matching")
 
-   ;; We don't need interval management anymore - we'll use Electric's reactive nature
    (swap! pong-state/state assoc-in [:bci :matching?] true)
    true))
 

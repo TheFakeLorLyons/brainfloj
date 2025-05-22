@@ -29,16 +29,25 @@
 
 (def state (atom default-state))
 
-(e/defn init-bci-state! []
-  (swap! state update :bci merge
-         {:device-connected? false
-          :active-profile nil
-          :match-interval nil
-          :confidence {:up 0.0 :down 0.0}
-          :threshold 0.6   ; Default confidence threshold
-          :sensitivity 0.5 ; Default movement sensitivity
-          :recording? false
-          :current-category nil}))
+(defn init-bci-state! []
+  (try
+    (swap! state update :bci merge
+           {:device-connected? false
+            :active-profile nil
+            :match-interval nil
+            :confidence {:up 0.0 :down 0.0}
+            :threshold 0.6   ; Default confidence threshold
+            :sensitivity 0.5 ; Default movement sensitivity
+            :recording? false
+            :current-category nil
+            :matching? false
+            :pending-connect false
+            :pending-disconnect false
+            :pending-record nil
+            :pending-stop-record false
+            :status-check-needed false})
+    (catch #?(:clj Exception :cljs :default) e
+      (println "Error initializing BCI state:" e))))
 
 (defn init-game-state! []
   (reset! state default-state))
@@ -54,16 +63,22 @@
        :dy (-> rand-start (* 4) (- 2))
        :radius current-radius}))) 
 
-(e/defn start-game! []
-  ; Move the ball to center and give it a random direction
-  (reset-ball!)
-  ; Set game to playing state
-  (swap! state assoc-in [:game :playing?] true)
-  )
+(defn start-game! []
+  #?(:cljs
+     (try
+       (swap! state assoc-in [:game :playing?] true)
+       (js/console.log "Game started")
+       (catch :default e
+         (js/console.error "Error starting game:" e)))))
 
 (defn stop-game! []
-  (reset-ball!)
-  (swap! state assoc-in [:game :playing?] false))
+  #?(:cljs
+     (try
+       (swap! state assoc-in [:game :playing?] false)
+       (js/console.log "Game stopped")
+       (catch :default e
+         (js/console.error "Error stopping game:" e)))))
+
 
 (defn reset-game! []
   (let [keys-pressed (:keys-pressed @state)

@@ -16,75 +16,73 @@
          matching? (get-in state [:bci :matching?])
          frame-id-atom (atom nil)]
 
-     ;; Cleanup any existing animation frame on each re-render
+     ; Cleanup any existing animation frame on each re-render
      (when @frame-id-atom
        (js/cancelAnimationFrame @frame-id-atom)
        (reset! frame-id-atom nil))
 
-     ;; Start a new game loop if we're playing
+     ; Start a new game loop if we're playing
      (when playing?
        (js/console.log "Starting new game loop")
        (letfn [(game-loop []
-                 ;; Process keyboard input from keys-pressed set
+                 ; Process keyboard input from keys-pressed set
                  (let [keys-pressed (get @pong-state/state :keys-pressed #{})]
                    (when (contains? keys-pressed "ArrowUp")
                      (pong-state/move-paddle! :up))
                    (when (contains? keys-pressed "ArrowDown")
                      (pong-state/move-paddle! :down)))
 
-                 ;; Process BCI input if it's connected and matching
+                 ; Process BCI input if it's connected and matching
                  (when matching?
                    (try
                      (bci/process-bci-input!)
                      (catch :default e
                        (js/console.error "Error processing BCI input:" e))))
 
-                 ;; Run the game logic tick
+                 ; Run the game logic tick
                  (pong-state/game-loop-tick!)
 
-                 ;; Continue the loop if still playing
+                 ; Continue the loop if still playing
                  (when (get-in @pong-state/state [:game :playing?])
                    (reset! frame-id-atom (js/requestAnimationFrame game-loop))))]
 
-         ;; Start the game loop immediately
+         ; Start the game loop immediately
          (reset! frame-id-atom (js/requestAnimationFrame game-loop))))
 
-     ;; Cleanup on unmount
+     ; Cleanup on unmount
      (e/on-unmount #(when @frame-id-atom
                       (js/cancelAnimationFrame @frame-id-atom)
                       (reset! frame-id-atom nil)))
 
-     ;; Return nil for the component (it doesn't render anything)
+     ; Return nil for the component (it doesn't render anything)
      nil)))
 
-;; Fixed BCIStatusChecker using e/interval and e/for
-(e/defn BCIStatusChecker []
+; Safe initial check
+(e/defn InitialBCICheck []
   (e/client
-   ;; Trigger every 3 seconds using JS interop
-   (let [tick (atom 0)
-         interval-id (js/setInterval #(swap! tick inc) 3000)]
 
-     ;; Cleanup on unmount
-     (e/on-unmount #(js/clearInterval interval-id))
+     ; Simple one-time check with delay
+   (js/setTimeout
+    (fn [_]
 
-     ;; Reactively re-run on tick
-     (e/watch tick)
-
-     ;; Call to server (safe in Electric body)
-     (let [result (e/server (bci/get-device-status-server))]
-       (when result
-         (swap! pong-state/state assoc-in [:bci :device-connected?] (:connected result))
-         (swap! pong-state/state assoc-in [:bci :active-profile] (:profile-name result))))
-
-     nil)))
+      (js/console.log "Running initial BCI check...")
+      (let [result (bci/check-device-status!)]
+        (js/console.log "Initial check result:" (clj->js result))
+        (when result
+          (swap! pong-state/state update-in [:bci] merge
+                 {:device-connected? (boolean (:connected result))
+                  :active-profile (:profile-name result)})))))
+   1000) ; 1 second delay
+  nil)
 
 (e/defn Main [ring-request]
   (e/client
-   #_(when-not @client-state  ;; Only initialize once
-     (js/console.log "Initializing game state...")
+   (when-not @client-state  ; Only initialize once
      (reset! pong-state/state pong-state/default-state)
      (pong-state/init-keyboard-controls!)
-     (reset! client-state true))
+     (pong-state/init-bci-state!) ; Make sure BCI state is initialized
+     (reset! client-state true)
+     (js/console.log "Game state initialized successfully"))
    
    (binding [dom/node js/document.body] ; Don't forget to bind and use a wrapper div
      (dom/div ; Mandatory wrapper div https://github.com/hyperfiddle/electric/issues/74
@@ -110,28 +108,18 @@
                 ; Game container
        (dom/div
         (dom/props {:class "pong-container"})
-
         (component/Instructions)
-
-                   ;; Game court with paddles and ball
         (component/PongCourt)
-
-                   ;; Game Loop (invisible component that drives the game)
         (GameLoop)
-
-                   ;; BCI components
+                   ; BCI components
         (dom/div
          (dom/props {:class "bci-area"})
          (component/BCIPanel)
-
-                    ;; BCI status checker
-         (BCIStatusChecker))
-
+                    ; BCI status checker
+         (InitialBCICheck))
         #_(component/StateDebugging)
-                   ;; Debug panel
+                   ; Debug panel
         (component/DebugPanel)))))))
-
-
 
 #_(e/defn MainMenu []
   (e/client
