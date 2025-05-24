@@ -35,21 +35,32 @@
              profile-name (:name profile)
              connected? (api/connect-from-profile! profile)]
          (println "Connection result:" connected? "with profile" profile-name)
-         {:success connected? 
+         {:success connected?
+          :connected connected? 
           :profile-name profile-name})
        (catch Exception e
          (println "Error in connect-device-server:" (.getMessage e))
-         {:success false :error (.getMessage e)}))))
+         {:connected false :error (.getMessage e)}))))
 
 (e/defn connect-device! []
   (e/client
+   (js/console.log "Client: Starting connection process")
    (let [result (e/server (connect-device-server))]
-     (when (:connected result)
-       (js/console.log "Connection successful:" (:profile-name result))
-       (swap! pong-state/state assoc-in [:bci :device-connected?] true)
-       (swap! pong-state/state assoc-in [:bci :active-profile] (:profile-name result)))
+     (js/console.log "Client: Connection result:" (clj->js result))
+     (if (:connected result)
+       (do
+         (swap! pong-state/state update-in [:bci] merge
+                {:device-connected? (:connected result)
+                 :active-profile (:profile-name result)
+                 :connection-error nil})
+         (js/console.log "Client: State updated successfully"))
+       (do
+         (swap! pong-state/state update-in [:bci] merge
+                {:device-connected? false
+                 :active-profile nil
+                 :connection-error (:error result)})
+         (js/console.log "Client: Connection failed:" (:error result))))
      result)))
-
 (e/defn handle-connect-click [_]
   (e/client
    (js/console.log "Client-side connect click handler started")
@@ -67,10 +78,10 @@
        (try
          (when-let [f (:release-board! @state/state)]
            (f @state/shim))
-         {:success true}
+         {:connected true}
          (catch Exception e
            (println "Error disconnecting:" (.getMessage e))
-           {:success false :error (.getMessage e)})))))
+           {:connected false :error (.getMessage e)})))))
 
 
 (e/defn disconnect-device! []
@@ -78,7 +89,7 @@
    (let [result (e/server (disconnect-device-server))]
      (js/console.log "Disconnect result:" (clj->js result))
      (swap! pong-state/state update-in [:bci] merge
-            {:device-connected? false
+            {:connected false
              :active-profile nil
              :matching? false})
      ; Clear any running intervals
@@ -98,20 +109,35 @@
 #?(:clj
    (defn get-device-status-server []
      (try
-       (let [connected? (boolean @state/shim)]
-         {:connected connected?
-          :profile-name (when connected? (:name ((:get-active-profile @state/state))))})
+       (let [connected? (boolean @state/shim)
+             profile-name (when connected?
+                            (let [active-profile-fn (:get-active-profile @state/state)]
+                              (when active-profile-fn
+                                (:name (active-profile-fn)))))]
+         {:success true
+          :connected connected?
+          :profile-name profile-name})
        (catch Exception e
          (println "Error getting device status:" (.getMessage e))
-         {:connected false :error (.getMessage e)}))))
+         {:success false
+          :connected false
+          :error (.getMessage e)}))))
 (e/defn check-device-status! []
   (e/client
+   (js/console.log "Client: Checking device status")
    (let [status (e/server (get-device-status-server))]
-     (js/console.log "Device status received:" (clj->js status))
-     (when status
-       (swap! pong-state/state update-in [:bci] merge
-              {:device-connected? (:connected status)
-               :active-profile (:profile-name status)}))
+     (js/console.log "Client: Status result:" (clj->js status))
+     (when (:connected status)
+       (let [current-state (get-in @pong-state/state [:bci])
+             new-connected? (:connected status)
+             new-profile (:profile-name status)]
+         ;; Only update if there's actually a change to avoid unnecessary re-renders
+         (when (or (not= (:device-connected? current-state) new-connected?)
+                   (not= (:active-profile current-state) new-profile))
+           (js/console.log "Client: Updating status - Connected:" new-connected? "Profile:" new-profile)
+           (swap! pong-state/state update-in [:bci] merge
+                  {:device-connected? new-connected?
+                   :active-profile new-profile}))))
      status)))
 
 
@@ -128,16 +154,16 @@
    (defn stop-recording-server []
      (try
        (lexi/stop-wave-signature-recording!)
-        {:success true}
+        {:connected true}
        (catch Exception e
          (println "Error stopping recording:" (.getMessage e))
-         {:success false :error (.getMessage e)}))))
+         {:connected false :error (.getMessage e)}))))
 
 (e/defn start-recording! [category]
   (e/client
    (js/console.log "Client: Starting recording for category:" category)
     (let [result (e/server (start-recording-server category))]
-      (when (:success result)
+      (when (:connected result)
         (swap! pong-state/state assoc-in [:bci :recording?] true)
         (swap! pong-state/state assoc-in [:bci :current-category] category))
       result)))

@@ -16,76 +16,125 @@
          matching? (get-in state [:bci :matching?])
          frame-id-atom (atom nil)]
 
-     ; Cleanup any existing animation frame on each re-render
+     ;; Cleanup any existing animation frame on each re-render
      (when @frame-id-atom
        (js/cancelAnimationFrame @frame-id-atom)
        (reset! frame-id-atom nil))
 
-     ; Start a new game loop if we're playing
+     ;; Start a new game loop if we're playing
      (when playing?
        (js/console.log "Starting new game loop")
        (letfn [(game-loop []
-                 ; Process keyboard input from keys-pressed set
+                 ;; Process keyboard input from keys-pressed set
                  (let [keys-pressed (get @pong-state/state :keys-pressed #{})]
                    (when (contains? keys-pressed "ArrowUp")
                      (pong-state/move-paddle! :up))
                    (when (contains? keys-pressed "ArrowDown")
                      (pong-state/move-paddle! :down)))
 
-                 ; Process BCI input if it's connected and matching
+                 ;; Process BCI input if it's connected and matching
                  (when matching?
-                   (try
-                     (bci/process-bci-input!)
-                     (catch :default e
-                       (js/console.error "Error processing BCI input:" e))))
+                     (bci/process-bci-input!))
 
-                 ; Run the game logic tick
+                 ;; Run the game logic tick
                  (pong-state/game-loop-tick!)
 
-                 ; Continue the loop if still playing
+                 ;; Continue the loop if still playing
                  (when (get-in @pong-state/state [:game :playing?])
                    (reset! frame-id-atom (js/requestAnimationFrame game-loop))))]
 
-         ; Start the game loop immediately
+         ;; Start the game loop immediately
          (reset! frame-id-atom (js/requestAnimationFrame game-loop))))
 
-     ; Cleanup on unmount
+     ;; Cleanup on unmount
      (e/on-unmount #(when @frame-id-atom
                       (js/cancelAnimationFrame @frame-id-atom)
                       (reset! frame-id-atom nil)))
 
-     ; Return nil for the component (it doesn't render anything)
+     ;; Return nil for the component (it doesn't render anything)
      nil)))
 
-; Safe initial check
-(e/defn InitialBCICheck []
+;; Fixed InitialBCICheck - using Electric component properly
+#_(e/defn InitialBCICheck []
   (e/client
+   ;; Use e/effect to run the check once after component mounts
+   
+    (js/setTimeout
+     (fn [_]
+       (js/console.log "Running initial BCI check...")
+       ;; Use a simple function call rather than trying to invoke Electric component
 
-     ; Simple one-time check with delay
-   (js/setTimeout
-    (fn [_]
+       (let [status (bci/check-device-status!)]
+         (js/console.log "Initial check result:" (clj->js status))
+         (when status
+           (swap! pong-state/state update-in [:bci] merge
+                  {:device-connected? (boolean (:connected status))
+                   :active-profile (:profile-name status)}))))
+     1000))
+   nil)
 
-      (js/console.log "Running initial BCI check...")
-      (let [result (bci/check-device-status!)]
-        (js/console.log "Initial check result:" (clj->js result))
-        (when result
-          (swap! pong-state/state update-in [:bci] merge
-                 {:device-connected? (boolean (:connected result))
-                  :active-profile (:profile-name result)})))))
-   1000) ; 1 second delay
-  nil)
+;; Alternative approach - periodic status checker
+(e/defn PeriodicStatusChecker []
+  (e/client
+   (let [timer-atom (atom 0)
+         interval-id (atom nil)]
+
+     ;; Start the timer if not already running
+     (when-not @interval-id
+       (js/console.log "Starting periodic BCI status checker with Electric timer")
+       (reset! interval-id
+               (js/setInterval
+                (fn []
+                  ;; Just increment the timer - this will trigger Electric reactivity
+                  (swap! timer-atom inc))
+                5000)))
+
+     ;; Register cleanup
+     (e/on-unmount
+      (fn []
+        (when @interval-id
+          (js/clearInterval @interval-id)
+          (reset! interval-id nil))))
+
+     ;; Watch the timer atom - this makes the component reactive to timer changes
+     (let [timer-val (e/watch timer-atom)
+           state (e/watch pong-state/state)
+           pending-connect? (get-in state [:bci :pending-connect])
+           pending-disconnect? (get-in state [:bci :pending-disconnect])]
+
+       ;; Only check status when timer changes and we're not in pending state
+       (when (and (> timer-val 0)  ;; Skip the initial render
+                  (not pending-connect?)
+                  (not pending-disconnect?))
+         (js/console.log "Running periodic status check, timer:" timer-val)
+
+         ;; Now we can safely call the Electric server function
+
+         (let [status (e/server (bci/get-device-status-server))]
+           (js/console.log "Periodic status result:" (clj->js status))
+           (when (:success status)
+             (let [current-state (get-in @pong-state/state [:bci])
+                   new-connected? (:connected status)
+                   new-profile (:profile-name status)]
+               (when (or (not= (:device-connected? current-state) new-connected?)
+                         (not= (:active-profile current-state) new-profile))
+                 (js/console.log "Updating status - Connected:" new-connected? "Profile:" new-profile)
+                 (swap! pong-state/state update-in [:bci] merge
+                        {:device-connected? new-connected?
+                         :active-profile new-profile})))))))
+     nil)))
 
 (e/defn Main [ring-request]
   (e/client
-   (when-not @client-state  ; Only initialize once
+   (when-not @client-state  ;; Only initialize once
      (reset! pong-state/state pong-state/default-state)
      (pong-state/init-keyboard-controls!)
-     (pong-state/init-bci-state!) ; Make sure BCI state is initialized
+     (pong-state/init-bci-state!) ;; Make sure BCI state is initialized
      (reset! client-state true)
      (js/console.log "Game state initialized successfully"))
-   
-   (binding [dom/node js/document.body] ; Don't forget to bind and use a wrapper div
-     (dom/div ; Mandatory wrapper div https://github.com/hyperfiddle/electric/issues/74
+
+   (binding [dom/node js/document.body] ;; Don't forget to bind and use a wrapper div
+     (dom/div ;; Mandatory wrapper div https://github.com/hyperfiddle/electric/issues/74
       (let [server? (dom/label (dom/text "Toggle client/server:")
                                (dom/input (dom/props {:type "checkbox", :checked true})
                                           (dom/On "change" (fn [js-event] (-> js-event .-target .-checked)) true)))]
@@ -93,33 +142,36 @@
                              (e/server (str "`1` on server is `" (class 1) "`"))
                              (e/client (str "`1` on client is `" (goog/typeOf 1) "`"))))))
       (dom/hr)
-      (dom/p (dom/text "Source code is in ") (dom/code (dom/text "src/brain_pong/main.cljc")))
+      (dom/p (dom/text "Source code is in ") (dom/code (dom/text "src/brain_pong/main.cljc")))
       (dom/p (dom/text "Check out ") (dom/a (dom/text "Electric examples")
                                             (dom/props {:href "https://electric.hyperfiddle.net" :target "_blank"})))
 
       (dom/div
        (dom/props {:class "main-container"})
 
-                ; Page header
+       ;; Page header
        (dom/div
         (dom/props {:class "header"})
         (dom/h1 (dom/text "Electric Pong")))
 
-                ; Game container
+       ;; Game container
        (dom/div
         (dom/props {:class "pong-container"})
         (component/Instructions)
         (component/PongCourt)
         (GameLoop)
-                   ; BCI components
+        ;; BCI components
         (dom/div
          (dom/props {:class "bci-area"})
          (component/BCIPanel)
-                    ; BCI status checker
-         (InitialBCICheck))
-        #_(component/StateDebugging)
-                   ; Debug panel
-        (component/DebugPanel)))))))
+         ;; Use the fixed status checker
+         ;; (InitialBCICheck)
+         ;; Optional: Use periodic checker instead
+          (PeriodicStatusChecker)
+         ))
+       #_(component/StateDebugging)
+       ;; Debug panel
+       (component/DebugPanel))))))
 
 #_(e/defn MainMenu []
   (e/client
