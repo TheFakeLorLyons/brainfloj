@@ -18,4 +18,8 @@
         log-stream (java.io.PrintStream. (java.io.FileOutputStream. log-file false))]
     (configure-brainflow-logging!)
     (System/setOut log-stream)
-    (System/setErr log-stream)))
+    (System/setErr log-stream)
+    (System/setProperty "jna.debug_load" "false")
+    (System/setProperty "jna.debug_load.jna" "false")
+    (System/setProperty "jna.nosys" "true")))
+

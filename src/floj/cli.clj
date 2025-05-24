@@ -40,6 +40,8 @@
 
 (defn initialize-application! []
   (fio/application-setup!)
+  (log/redirect-system-output!)
+  
   (profiles/create-default-profile!)
   (initialize-modules!))
 
@@ -68,10 +70,6 @@
           (recur))))))
 
 (defn -main []
-  (log/redirect-system-output!)
-  (System/setProperty "jna.debug_load" "false")
-  (System/setProperty "jna.debug_load.jna" "false")
-  (System/setProperty "jna.nosys" "true")
 
   (initialize-application!)
   (let [_ (mount/start)]

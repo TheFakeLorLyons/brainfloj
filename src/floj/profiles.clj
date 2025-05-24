@@ -93,16 +93,23 @@
           (println "Created default profile at:" history-path)
           history-path)))))
 
+(defn set-active-profile!
+  "Updates the in-memory state to reflect the current active profile"
+  [profile-name]
+  (swap! state/state assoc :get-active-profile (constantly profile-name)))
+
 (defn set-default-profile!
   "Sets the active-profile key in config"
   [name]
   (let [config-path (fio/config-file-path)]
     (spit config-path (pr-str {:active-profile name}))
+    (set-active-profile! name)
     (println "Set default profile to:" name)))
 
 (defn create-profile!
-  "Create a new profile with the given name"
-  [profile-name]
+  "Create a new profile with the given name. If `suppress-device-registration?` is true,
+  it will skip asking about device registration."
+  [profile-name & [suppress-device-registration?]]
   (fio/ensure-profile-directories! profile-name)
   (let [timestamp (System/currentTimeMillis)
         new-profile {:name profile-name
@@ -125,13 +132,15 @@
     (print "Would you like to set that as your default profile? (y/n) ")
     (flush)
     (let [profile-response (read-line)]
-      (when (= (str/lower-case (subs profile-response 0 1)) "y")
-        (set-default-profile! profile-name)
-        (print "Would you like to configure a new device? (y/n) ")
-        (flush)
-        (let [device-response (read-line)]
-          (when (= (str/lower-case (subs device-response 0 1)) "y")
-            ((:register-device @state/state))))))
+      (when (= (clojure.string/lower-case (subs profile-response 0 1)) "y")
+        (set-default-profile! profile-name)))
+    ; Prompt for device config if not suppressed
+    (when (not suppress-device-registration?)
+      (print "Would you like to configure a new device? (y/n) ")
+      (flush)
+      (let [device-response (read-line)]
+        (when (= (clojure.string/lower-case (subs device-response 0 1)) "y")
+          ((:register-device @state/state)))))
     new-profile))
 
 (defn switch-profile! []
@@ -154,10 +163,10 @@
           calibration-files-count (count (get-in profile [:calibration-history :files] []))
           latest-path (get-latest-profile-path profile-name)
 
-          ;; Create a new file if:
-          ;; 1. No profile file exists yet OR
-          ;; 2. We've reached MAX_CALIBRATION_FILES in the calibration history
-          ;; This triggers a "rotation" of the profile history
+          ; Create a new file if:
+          ; 1. No profile file exists yet OR
+          ; 2. Use reaches MAX_CALIBRATION_FILES in the calibration history
+          ; This triggers a "rotation" of the profile history
           create-new-file? (or (nil? latest-path)
                                (not (.exists (io/file (or latest-path ""))))
                                (>= calibration-files-count calibrate/MAX_CALIBRATION_FILES))
@@ -258,7 +267,7 @@
           profile
           (assoc profile :name active-profile-name)))
       (catch Exception e
-        (println "Failed to load profile, using default")
+        (println "Failed to load profile, using default \n")
         {:name "default"
          :bci-device {}
          :golden-tensor {}}))))

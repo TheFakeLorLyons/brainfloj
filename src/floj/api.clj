@@ -5,7 +5,8 @@
             [floj.state :as state]
             [floj.profiles :as profiles]
             [clojure.java.io :as io]
-            [clojure.edn :as edn])
+            [clojure.edn :as edn]
+            [clojure.string :as str])
   (:import  [brainflow BoardIds]))
 
 (defn get-current-sample-rate
@@ -23,6 +24,24 @@
 (def CURRENT_CHANNELS (get-current-channels))
 (def CURRENT_CHANNEL_COUNT (count (get-current-channels)))
 #_(def CURRENT_BOARD_ID (get-current-board-id))
+
+(defn compare-and-select-profile-name []
+  (let [active-profile-name ((:get-active-profile @state/state))]
+    (if (= active-profile-name "default")
+      active-profile-name
+      (do
+        (println "You don't have a custom profile configured.")
+        (loop []
+          (print "Please enter a unique profile name: ")
+          (flush)
+          (let [input (read-line)]
+            (if (str/blank? input)
+              (do
+                (println "Profile name cannot be blank.")
+                (recur))
+              (do
+                (profiles/create-profile! input true)
+                input))))))))
 
 (defn get-board-info
   "Get detailed information about the currently connected board"
@@ -149,31 +168,33 @@
   "Interactive prompt to configure BCI device settings"
   []
   (println "\n--- BCI Device Configuration ---")
-  (print-board-type-options)
-  (print "Enter the number associated with your board in the list: ")
   (flush)
-  (let [board-id (Integer/parseInt (read-line))]
-    (print "Enter MAC address (e.g., XX:XX:XX:XX:XX:XX): ")
+  (let [profile-name (compare-and-select-profile-name)]
+    (print-board-type-options)
+    (print "Enter the number associated with your board in the list: ")
     (flush)
-    (let [mac-address (read-line)]
-      (print "Enter COM port (if applicable, e.g., COM3 or /dev/ttyUSB0): ")
+    (let [board-id (Integer/parseInt (read-line))]
+      (print "Enter MAC address (e.g., XX:XX:XX:XX:XX:XX): ")
       (flush)
-      (let [name (:name ((:get-active-profile @state/state)))
-            com-port (read-line)
-            config {:device-type (id/board-types board-id)
-                    :board-id board-id
-                    :mac-address mac-address
-                    :com-port com-port
-                    :connection-method "bled112"}]
-        (println "\nSaving BCI device configuration...")
-
-        (update-profile-bci-device! name config)
-        (println "Configuration saved to profile:" name)
-        (println "Would you like to connect to that device now?")
+      (let [mac-address (read-line)]
+        (print "Enter COM port (if applicable, e.g., COM3 or /dev/ttyUSB0): ")
         (flush)
-        (let [connect? (read-line)]
-          (when connect?
-            (connect! mac-address com-port :board-id board-id)))))))
+        (let [name profile-name
+              com-port (read-line)
+              config {:device-type (id/board-types board-id)
+                      :board-id board-id
+                      :mac-address mac-address
+                      :com-port com-port
+                      :connection-method "bled112"}]
+          (println "\nSaving BCI device configuration...")
+
+          (update-profile-bci-device! name config)
+          (println "Configuration saved to profile:" name)
+          (println "Would you like to connect to that device now?")
+          (flush)
+          (let [connect? (read-line)]
+            (when connect?
+              (connect! mac-address com-port :board-id board-id))))))))
 
 (defn profile-has-bci-device?
   "Check if the profile has configured BCI device settings"
@@ -184,14 +205,14 @@
          (:board-id device-config)  ;; Board ID is required for connection
          (not (nil? (:mac-address device-config)))
          (not (nil? (:com-port device-config)))
-         (or (not (empty? (:mac-address device-config)))
-             (not (empty? (:com-port device-config)))))))
+         (or (seq (:mac-address device-config))
+             (seq (:com-port device-config))))))
 
 (defn connect-from-profile!
   "Connect to the BCI device using the settings from the profile"
   [profile]
   (println (str "Connected?: "(profile-has-bci-device? profile)))
-  (if (profile-has-bci-device? profile)
+  (when (profile-has-bci-device? profile)
     (let [device-config (:bci-device profile)
           board-type (:device-type device-config)
           board-id (:board-id device-config)
