@@ -125,86 +125,32 @@
              speed (* base-speed normalized-confidence)]
          speed))))
 
-#?(:cljs
-   (defn process-bci-input! []
-     (let [state @pong-state/state
-           connected? (get-in state [:bci :device-connected?])
-           matching? (get-in state [:bci :matching?])
-           confidence (get-in state [:bci :confidence] {:up 0.0 :down 0.0})
-           threshold (get-in state [:bci :threshold] 0.6)
-           sensitivity (get-in state [:bci :sensitivity] 0.5)]
-
-       (when (and connected? matching?)
-         (let [; Calculate paddle speeds based on confidence values
-               up-confidence (:up confidence)
-               down-confidence (:down confidence)
-
-               ; Apply non-linear transformation to make movements more responsive
-               ; This helps when confidence values are close to threshold
-               enhanced-up (js/Math.pow up-confidence 1.5)
-               enhanced-down (js/Math.pow down-confidence 1.5)
-
-               ; Calculate movement speeds with the enhanced values
-               up-speed (calculate-paddle-speed enhanced-up threshold sensitivity)
-               down-speed (calculate-paddle-speed enhanced-down threshold sensitivity)]
-
-           ; If we have both up and down confidence high, use the stronger signal
-           (cond
-             ; Strong up signal and stronger than down
-             (and up-speed (or (not down-speed) (> up-confidence down-confidence)))
-             (pong-state/move-paddle! :up)
-
-             ; Strong down signal and stronger than up
-             (and down-speed (or (not up-speed) (> down-confidence up-confidence)))
-             (pong-state/move-paddle! :down)))))))
-
-(e/defn get-confidence-data []
-  (e/server (signature/match-brain-activity-server)))
-
-(e/defn RecordingStatusWatcher []
-  (e/client
-   (let [state (e/watch pong-state/state)
-         pending-record (get-in state [:bci :pending-record])
-         pending-stop (get-in state [:bci :pending-stop-record])]
-
-     ;; Handle pending recording start
-     (when pending-record
-       (swap! pong-state/state assoc-in [:bci :pending-record] nil)
-       (start-recording! pending-record))
-
-     ;; Handle pending recording stop
-     (when pending-stop
-       (swap! pong-state/state assoc-in [:bci :pending-stop-record] nil)
-       (stop-recording!))
-
-     nil)))
-
 #?(:clj
    (defn match-brain-activity-server []
      (try
-       ;; First check if we have EEG recording active
+       ; First check if we have EEG recording active
        (let [recording? @state/recording?
              eeg-data @state/eeg-data]
          (cond
-           ;; Recording not started
+           ; Recording not started
            (not recording?)
            (do
              (println "EEG recording not started - need to start Pong recording first")
              {:up 0.0 :down 0.0 :error "EEG recording not started"})
 
-           ;; No data or not started
+           ; No data or not started
            (nil? eeg-data)
            (do
              (println "EEG data not available - recording started but no data stream yet")
              {:up 0.0 :down 0.0 :error "EEG data stream not ready"})
 
-           ;; Data available but empty
+           ; Data available but empty
            (empty? eeg-data)
            (do
              (println "EEG data stream started but no data collected yet")
              {:up 0.0 :down 0.0 :error "No EEG data collected yet"})
 
-           ;; We have data - proceed with matching
+           ; We have data - proceed with matching
            :else
            (let [sampling-rate ((:sampling-rate @state/state))
                  last-n-samples (min (count eeg-data) sampling-rate)
@@ -264,26 +210,21 @@
          {:up 0.0 :down 0.0 :error (.getMessage e)}))))
 
 #?(:clj
-   (defn start-eeg-streaming-server []
+   (defn start-eeg-streaming-server [category]
      (try
-       (println "Server: Starting EEG data streaming for Pong")
-       ;; Use your existing recording infrastructure with custom config for Pong
-       (let [custom-config {:path "resources/recordings"
-                            :recording-type "pong"}]
-         ;; Start recording using your lor/start-recording! function
-         (record/start-recording! custom-config)
+       (println "Server: Starting EEG data streaming for Pong")     
+         (lexi/start-category-recording! category)
          (println "Started Pong EEG recording stream")
          {:success true :streaming true})
        (catch Exception e
          (println "Error starting EEG streaming:" (.getMessage e))
-         {:success false :streaming false :error (.getMessage e)}))))
+         {:success false :streaming false :error (.getMessage e)})))
 
 #?(:clj
-   (defn stop-eeg-streaming-server []
+   (defn stop-eeg-streaming-server [category]
      (try
        (println "Server: Stopping EEG data streaming")
-       ;; Use your existing recording infrastructure to stop
-       (record/stop-recording!)
+       (lexi/stop-category-recording! category)
        {:success true :streaming false}
        (catch Exception e
          (println "Error stopping EEG streaming:" (.getMessage e))
@@ -305,19 +246,18 @@
          (println "Error checking EEG data status:" (.getMessage e))
          {:data-available false :recording false :error (.getMessage e)}))))
 
-;; Electric functions to call from client
-(e/defn start-eeg-streaming! []
+(e/defn start-eeg-streaming! [category]
   (e/client
    (js/console.log "Client: Starting EEG streaming")
-   (let [result (e/server (start-eeg-streaming-server))]
+   (let [result (e/server (start-eeg-streaming-server category))]
      (when (:success result)
        (swap! pong-state/state assoc-in [:bci :streaming?] true))
      result)))
 
-(e/defn stop-eeg-streaming! []
+(e/defn stop-eeg-streaming! [category]
   (e/client
    (js/console.log "Client: Stopping EEG streaming")
-   (let [result (e/server (stop-eeg-streaming-server))]
+   (let [result (e/server (stop-eeg-streaming-server category))]
      (when (:success result)
        (swap! pong-state/state assoc-in [:bci :streaming?] false))
      result)))
@@ -337,8 +277,7 @@
    (swap! pong-state/state assoc-in [:bci :matching?] false)
    true))
 
-;; Modified PollBrainActivity to handle streaming
-(e/defn PollBrainActivity []
+(e/defn PollBrainActivity [category]
   (e/client
    (let [_ (dom/on-animation-frame)
          state (e/watch pong-state/state)
@@ -346,18 +285,58 @@
          streaming? (get-in state [:bci :streaming?])
          connected? (get-in state [:bci :device-connected?])]
 
-     ;; Start streaming if connected but not streaming
      (when (and connected? matching? (not streaming?))
        (js/console.log "Starting EEG streaming for brain activity matching")
-       (start-eeg-streaming-server))
+       (let [stream-result (e/server (start-eeg-streaming-server category))]
+         (js/console.log "Stream start result:" (clj->js stream-result))
+         (when (:success stream-result)
+           (swap! pong-state/state assoc-in [:bci :streaming?] true))))
 
-     ;; Only poll for brain activity when matching is active AND streaming
-     (when (and matching? streaming?)
-       (let [confidence-data (get-confidence-data)]
+     (when (and matching? streaming? connected?)
+
+       (let [confidence-data (e/server (match-brain-activity-server))]
+         (js/console.log "Raw confidence data received:" (clj->js confidence-data))
          (when confidence-data
            (if (:error confidence-data)
              (js/console.log "BCI Error:" (:error confidence-data))
              (do
-               (js/console.log "Received confidence data:" (clj->js confidence-data))
+               (js/console.log "Processing confidence data:" (clj->js confidence-data))
                (swap! pong-state/state assoc-in [:bci :confidence] confidence-data)
-               (process-bci-input!)))))))))
+               ))))))))
+
+#?(:cljs
+   (defn process-bci-input! []
+     (let [state @pong-state/state
+           connected? (get-in state [:bci :device-connected?])
+           matching? (get-in state [:bci :matching?])
+           confidence (get-in state [:bci :confidence] {:up 0.0 :down 0.0})
+           threshold (get-in state [:bci :threshold] 0.6)
+           sensitivity (get-in state [:bci :sensitivity] 0.5)]
+
+       (js/console.log "Processing BCI input - Connected:" connected? "Matching:" matching? "Confidence:" (clj->js confidence))
+
+       (when (and connected? matching?)
+         (let [; Calculate paddle speeds based on confidence values
+               up-confidence (:up confidence)
+               down-confidence (:down confidence)]
+
+           (js/console.log "Up confidence:" up-confidence "Down confidence:" down-confidence "Threshold:" threshold)
+
+           ; Check if either confidence exceeds threshold
+           (cond
+             ; Strong up signal and stronger than down
+             (and (>= up-confidence threshold)
+                  (> up-confidence down-confidence))
+             (do
+               (js/console.log "BCI: Moving paddle UP - confidence:" up-confidence)
+               (pong-state/move-paddle! :up))
+
+             ; Strong down signal and stronger than up  
+             (and (>= down-confidence threshold)
+                  (> down-confidence up-confidence))
+             (do
+               (js/console.log "BCI: Moving paddle DOWN - confidence:" down-confidence)
+               (pong-state/move-paddle! :down))
+
+             :else
+             (js/console.log "BCI: No movement - up:" up-confidence "down:" down-confidence "threshold:" threshold)))))))

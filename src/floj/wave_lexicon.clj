@@ -327,7 +327,7 @@
 
       (when-not context
         (throw (Exception. "Failed to create recording context")))
-(println "CONTEXT!! " context)
+
       ; Store context for recording
       (reset! state/recording-context context)
 
@@ -347,6 +347,73 @@
                (if include-in-aggregation "" "(practice mode - will not be aggregated)"))
 
       ; Return context for reference
+      context)
+    (catch Exception e
+      (println "Error starting wave signature recording:" (.getMessage e))
+      (.printStackTrace e)
+      nil)))
+
+(defn create-category-context
+  "Create a recording context for a wave signature category"
+  [profile-name category]
+  (try
+    (let [timestamp (System/currentTimeMillis)
+          category-dir (str (fio/get-wave-lexicon-dir profile-name category) 
+                            "/" (str/lower-case category) "_" timestamp)
+          board-id (brainflow/get-board-id @state/shim)
+          device-name (brainflow/get-device-name board-id)
+          metadata {:recording-id (str category "_" timestamp)
+                    :start-time timestamp
+                    :recorded-at (java.util.Date.)
+                    :device-type device-name
+                    :board-id board-id
+                    :sampling-rate api/CURRENT_SRATE
+                    :category-name (name category)
+                    :is-category true
+                    :version "1.0"
+                    :signatures-count (brainflow/get-eeg-channels board-id)}
+
+          context {:lorfile-dir category-dir
+                   :metadata metadata}]
+      context)
+    (catch Exception e
+      (println "Error creating wave signature context:" (.getMessage e))
+      (.printStackTrace e)
+      nil)))
+
+(defn start-category-recording!
+  "Start recording a whole category"
+  [category]
+  (try
+    (when (str/blank? category)
+      (throw (Exception. "Category and signature name must be provided")))
+
+    (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
+          context (create-category-context profile-name category)
+          category-recording-dir (str (fio/get-wave-lexicon-dir profile-name category)
+                             "/" category)
+          category-recording-info {:recording-type category
+                          :path category-recording-dir}]
+
+      (when-not context
+        (throw (Exception. "Failed to create recording context")))
+
+      ; Store context for recording
+      (reset! state/recording-context context)
+
+      ; Add tag for wave signature start
+      (swap! state/tags conj {:timestamp (:start-time (:metadata context))
+                              :label (str (str/upper-case category) "_START:"
+                                          (name category))})
+
+      ; Reset EEG data collection
+      (reset! state/eeg-data [])
+
+      ; Start the actual recording
+      (record/start-recording! category-recording-info)
+
+      ; Log success
+      (println "Started recording wave signature for" category)
       context)
     (catch Exception e
       (println "Error starting wave signature recording:" (.getMessage e))
@@ -555,9 +622,69 @@ _ (println "features" features)
       ;; Ensure recording is stopped even on error
       (when @state/recording?
         (record/stop-recording!))))
-  ;; This final call should be removed as it's redundant and could stop a different recording
-  ;; that was started after the error
   nil)
+
+
+(defn stop-category-recording!
+  "Stop recording a wave signature category and process it"
+  [category]
+  (try
+    (let [context @state/recording-context]
+
+          ; Add end tag
+      (let [timestamp (System/currentTimeMillis)
+            _ (println "Category " category)]
+        (swap! state/tags conj {:timestamp timestamp
+                                :label (str "WAVE_SIGNATURE_END:"
+                                            category)}))
+
+      (println "before context ends " context)
+          ; Stop recording
+      (record/stop-recording!)
+
+          ; Process the recording into a wave signature
+      (let [category-recording-dir (:lorfile-dir context)
+            metadata (get-in context [:metadata])
+            eeg-data @state/eeg-data
+            profile-name (:name ((:get-active-profile @state/state)))
+
+                ; Additional signature-specific metadata
+            signature-metadata (merge metadata
+                                      {:sample-count (count eeg-data)
+                                       :tags @state/tags
+                                       :processed-at (java.util.Date.)})]
+
+        (spit (str category-recording-dir "/recording_metadata.edn")
+              (pr-str signature-metadata))
+
+              ; Save tags separately for easy access
+        (spit (str category-recording-dir "/tags.edn")
+              (pr-str @state/tags))
+
+        (println "Count of samples " (count eeg-data))
+              ; Process the signature features if we have enough data
+        (if (>= (count eeg-data) MIN_SAMPLES_FOR_SIGNATURE)
+          (do
+            (process-wave-signature! eeg-data category-recording-dir signature-metadata)
+            (println "Successfully processed category recording for category: " category)
+
+            category-recording-dir)
+          (do
+            (println "Not enough data to process category recording. Minimum required:"
+                     MIN_SAMPLES_FOR_SIGNATURE)
+            nil))))
+
+    ;; Ensure recording is stopped in all cases
+    (when @state/recording?
+      (record/stop-recording!))
+    (catch Exception e
+      (println "Error stopping category recording:" (.getMessage e))
+      (.printStackTrace e)
+      ;; Ensure recording is stopped even on error
+      (when @state/recording?
+        (record/stop-recording!))))
+  nil)
+
 (defn add-wave-category
    "Interactive command to add a new wave category"
    []

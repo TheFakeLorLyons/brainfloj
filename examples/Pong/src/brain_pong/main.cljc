@@ -9,7 +9,7 @@
 
 (def client-state (atom nil))
 
-(e/defn GameLoop []
+(e/defn GameLoop [category]
   (e/client
    (let [state (e/watch pong-state/state)
          playing? (get-in state [:game :playing?])
@@ -31,21 +31,23 @@
        (js/console.log "Stopping BCI brain activity matching")
        (swap! pong-state/state assoc-in [:bci :matching?] false))
 
-     (bci/PollBrainActivity)
+     (bci/PollBrainActivity category)
 
      (when playing?
        (js/console.log "Starting new game loop")
        (letfn [(game-loop []
-                 (let [keys-pressed (get @pong-state/state :keys-pressed #{})]
-                   (when (contains? keys-pressed "ArrowUp")
-                     (pong-state/move-paddle! :up))
-                   (when (contains? keys-pressed "ArrowDown")
-                     (pong-state/move-paddle! :down)))
+                          (let [keys-pressed (get @pong-state/state :keys-pressed #{})]
+                            (when (contains? keys-pressed "ArrowUp")
+                              (pong-state/move-paddle! :up))
+                            (when (contains? keys-pressed "ArrowDown")
+                              (pong-state/move-paddle! :down)))
 
-                 (pong-state/game-loop-tick!)
+                          (if (and connected? matching?)
+                            (bci/process-bci-input!)
+                            (pong-state/game-loop-tick!))
 
-                 (when (get-in @pong-state/state [:game :playing?])
-                   (reset! frame-id-atom (js/requestAnimationFrame game-loop))))]
+                          (when (get-in @pong-state/state [:game :playing?])
+                            (reset! frame-id-atom (js/requestAnimationFrame game-loop))))]
 
          (reset! frame-id-atom (js/requestAnimationFrame game-loop))))
 
@@ -146,7 +148,7 @@
         (dom/props {:class "pong-container"})
         (component/Instructions)
         (component/PongCourt)
-        (GameLoop)
+        (GameLoop "pong")
       
         (dom/div
          (dom/props {:class "bci-area"})
