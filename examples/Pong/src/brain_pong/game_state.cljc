@@ -50,8 +50,9 @@
       (println "Error initializing BCI state:" e))))
 
 (defn init-game-state! []
-  (reset! state default-state))
-
+  (reset! state default-state)
+  (init-bci-state!))
+ 
 (defn reset-ball! []
   (let [{:keys [court]} (:game @state)
         direction (if (> rand-start 0.5) 1 -1)

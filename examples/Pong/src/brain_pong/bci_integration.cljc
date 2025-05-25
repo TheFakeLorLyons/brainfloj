@@ -31,45 +31,16 @@
      (try
        (initialize-modules!)
        (println "Server: Connecting to BCI device with active profile")
-       (let [profile (profiles/get-active-profile)
-             profile-name (:name profile)
-             connected? (api/connect-from-profile! profile)]
-         (println "Connection result:" connected? "with profile" profile-name)
-         {:success connected?
-          :connected connected? 
-          :profile-name profile-name})
+       (let [active-profile ((:get-active-profile @state/state))
+             active-profile-name (:name active-profile)
+             connected? (api/connect-from-profile! active-profile)]
+         (println "Connection result:" connected?)
+         {:connected connected?
+          :profile-name active-profile-name})
        (catch Exception e
          (println "Error in connect-device-server:" (.getMessage e))
          {:connected false :error (.getMessage e)}))))
 
-(e/defn connect-device! []
-  (e/client
-   (js/console.log "Client: Starting connection process")
-   (let [result (e/server (connect-device-server))]
-     (js/console.log "Client: Connection result:" (clj->js result))
-     (if (:connected result)
-       (do
-         (swap! pong-state/state update-in [:bci] merge
-                {:device-connected? (:connected result)
-                 :active-profile (:profile-name result)
-                 :connection-error nil})
-         (js/console.log "Client: State updated successfully"))
-       (do
-         (swap! pong-state/state update-in [:bci] merge
-                {:device-connected? false
-                 :active-profile nil
-                 :connection-error (:error result)})
-         (js/console.log "Client: Connection failed:" (:error result))))
-     result)))
-(e/defn handle-connect-click [_]
-  (e/client
-   (js/console.log "Client-side connect click handler started")
-   (let [result (e/server (connect-device-server))]
-     (js/console.log "Server connection result:" (clj->js result))
-     (when (:connected result)
-       (swap! pong-state/state assoc-in [:bci :device-connected?] true)
-       (swap! pong-state/state assoc-in [:bci :active-profile] (:profile-name result)))
-     result)))
 
 #?(:clj
    (def disconnect-device-server
@@ -110,13 +81,10 @@
    (defn get-device-status-server []
      (try
        (let [connected? (boolean @state/shim)
-             profile-name (when connected?
-                            (let [active-profile-fn (:get-active-profile @state/state)]
-                              (when active-profile-fn
-                                (:name (active-profile-fn)))))]
-         {:success true
-          :connected connected?
-          :profile-name profile-name})
+             active-profile ((:get-active-profile @state/state))
+             active-profile-name (:name active-profile)]
+         {:connected connected?
+          :profile-name active-profile-name})
        (catch Exception e
          (println "Error getting device status:" (.getMessage e))
          {:success false
