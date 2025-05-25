@@ -398,18 +398,17 @@
 
       (when-not context
         (throw (Exception. "Failed to create recording context")))
-      (println "state: " @state/recording-context)
 
       ; Store context for recording
       (reset! state/recording-context context)
-
+      (println "state: " @state/recording-context)
       ; Add tag for wave signature start
-      (swap! state/tags conj {:timestamp (:start-time (:metadata context))
+      (swap! @state/tags conj {:timestamp (:start-time (:metadata context))
                               :label (str (str/upper-case category) "_START:"
                                           (name category))})
 
       ; Reset EEG data collection
-      (reset! state/eeg-data [])
+      (reset! @state/eeg-data [])
 
       ; Start the actual recording
       (record/start-recording! category-recording-info)

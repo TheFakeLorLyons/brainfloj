@@ -211,7 +211,6 @@
 (defn connect-from-profile!
   "Connect to the BCI device using the settings from the profile"
   [profile]
-  (println (str "Connected?: "(profile-has-bci-device? profile)))
   (when (profile-has-bci-device? profile)
     (let [device-config (:bci-device profile)
           board-type (:device-type device-config)
