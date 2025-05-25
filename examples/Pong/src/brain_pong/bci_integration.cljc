@@ -2,6 +2,7 @@
   (:require [hyperfiddle.electric3 :as e]
             [brain-pong.game-state :as pong-state]
             [hyperfiddle.electric-dom3 :as dom]
+            [mount.core :as mount]
             [brain-pong.signature :as signature]
             #?(:clj [floj.api :as api])
             #?(:clj [floj.state :as state])
@@ -30,6 +31,7 @@
    (defn connect-device-server []
      (try
        (initialize-modules!)
+       (mount/start)
        (println "Server: Connecting to BCI device with active profile")
        (let [active-profile ((:get-active-profile @state/state))
              active-profile-name (:name active-profile)
