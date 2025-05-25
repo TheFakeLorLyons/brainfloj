@@ -4,7 +4,7 @@
             [brain-pong.bci-integration :as bci]
             [brain-pong.game-state :as pong-state]
             [brain-pong.components :as component]
-            [brain-pong.signature :as sig]
+            [brain-pong.signature :as signature]
             #?(:clj [floj.brainflow.board-ids :as bids])))
 
 (def client-state (atom nil))
@@ -14,44 +14,51 @@
    (let [state (e/watch pong-state/state)
          playing? (get-in state [:game :playing?])
          matching? (get-in state [:bci :matching?])
+         connected? (get-in state [:bci :device-connected?])
+         streaming? (get-in state [:bci :streaming?])
          frame-id-atom (atom nil)]
 
-     ; Clean up existing animations frame on each re-render
      (when @frame-id-atom
        (js/cancelAnimationFrame @frame-id-atom)
        (reset! frame-id-atom nil))
 
-     ; Start a new game loop if we're playing
+     (when (and playing? connected? (not matching?))
+       (js/console.log "Starting BCI brain activity matching")
+       (swap! pong-state/state assoc-in [:bci :matching?] true))
+
+     ;; Stop BCI control when game stops or device disconnected
+     (when (and matching? (or (not playing?) (not connected?)))
+       (js/console.log "Stopping BCI brain activity matching")
+       (swap! pong-state/state assoc-in [:bci :matching?] false))
+
+     (bci/PollBrainActivity)
+
      (when playing?
        (js/console.log "Starting new game loop")
        (letfn [(game-loop []
-                 ;; Process keyboard input from keys-pressed set
                  (let [keys-pressed (get @pong-state/state :keys-pressed #{})]
                    (when (contains? keys-pressed "ArrowUp")
                      (pong-state/move-paddle! :up))
                    (when (contains? keys-pressed "ArrowDown")
                      (pong-state/move-paddle! :down)))
 
-                 ; Process BCI input if it's connected and matching
-                 (when matching?
-                     (bci/process-bci-input!))
-
-                 ; Run the game logic tick
                  (pong-state/game-loop-tick!)
 
-                 ; Continue the loop if still playing
                  (when (get-in @pong-state/state [:game :playing?])
                    (reset! frame-id-atom (js/requestAnimationFrame game-loop))))]
 
-         ; Start the game loop immediately
          (reset! frame-id-atom (js/requestAnimationFrame game-loop))))
 
-     ; Cleanup on unmount
-     (e/on-unmount #(when @frame-id-atom
-                      (js/cancelAnimationFrame @frame-id-atom)
-                      (reset! frame-id-atom nil)))
+     (e/on-unmount
+      #(do
+         (when @frame-id-atom
+           (js/cancelAnimationFrame @frame-id-atom)
+           (reset! frame-id-atom nil))
 
-     ; Return nil for the component (it doesn't render anything)
+         (when matching?
+           (bci/stop-activity-matching!)
+           (bci/stop-eeg-streaming!))))
+
      nil)))
 
 ; Alternative approach - periodic status checker
@@ -140,16 +147,14 @@
         (component/Instructions)
         (component/PongCourt)
         (GameLoop)
-        ;; BCI components
+      
         (dom/div
          (dom/props {:class "bci-area"})
          (component/BCIPanel)
-         ;; Use the fixed status checker
-         ;; (InitialBCICheck)
-         ;; Optional: Use periodic checker instead
+
          (PeriodicStatusChecker)))
        #_(component/StateDebugging)
-       ;; Debug panel
+     
        (component/DebugPanel))))))
 
 (defn electric-boot [ring-request]

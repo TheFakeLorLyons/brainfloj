@@ -325,11 +325,10 @@
     (dom/props {:class "control-button start-button"})
     (dom/text "Start Game")
     (dom/On "click" (fn [_]
-                      (js/console.log "Force starting game...")
                       (pong-state/reset-game!)
                       (pong-state/init-keyboard-controls!)
                       (swap! pong-state/state assoc-in [:game :playing?] true)
-                      (js/console.log "Forced game start, state:"
+                      (js/console.log "Game start, state:"
                                       (pr-str (get-in @pong-state/state [:game :playing?]))))
             nil))))
 
@@ -339,11 +338,10 @@
     (dom/props {:class "control-button stop-button"})
     (dom/text "Stop Game")
     (dom/On "click" (fn [_]
-                      (js/console.log "Force starting game...")
                       (pong-state/reset-game!)
                       (pong-state/init-keyboard-controls!)
                       (swap! pong-state/state assoc-in [:game :playing?] false)
-                      (js/console.log "Forced game stop, state:"
+                      (js/console.log "Game stop, state:"
                                       (pr-str (get-in @pong-state/state [:game :playing?]))))
             nil))))
 
