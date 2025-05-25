@@ -95,10 +95,10 @@
         (swap! pong-state/state assoc-in [:bci :current-category] category))
       result)))
 
-(e/defn stop-recording! []
+(e/defn stop-recording! [category]
   (e/client
    (js/console.log "Client: Stopping recording")
-   (let [result (e/server (stop-recording-server))]
+   (let [result (e/server (stop-recording-server category))]
      (swap! pong-state/state assoc-in [:bci :recording?] false)
      (swap! pong-state/state assoc-in [:bci :current-category] nil)
      result)))
@@ -125,100 +125,104 @@
              speed (* base-speed normalized-confidence)]
          speed))))
 
-#?(:clj
-   (defn match-brain-activity-server []
-     (try
+
+(e/defn match-brain-activity-server
+  []
+  (e/server
+   (fn []
+     #?(:clj
+        (try
        ; First check if we have EEG recording active
-       (let [recording? @state/recording?
-             eeg-data @state/eeg-data]
-         (cond
+          (let [recording? @state/recording?
+                eeg-data @state/eeg-data]
+            (cond
            ; Recording not started
-           (not recording?)
-           (do
-             (println "EEG recording not started - need to start Pong recording first")
-             {:up 0.0 :down 0.0 :error "EEG recording not started"})
+              (not recording?)
+              (do
+                (println "EEG recording not started - need to start Pong recording first")
+                {:up 0.0 :down 0.0 :error "EEG recording not started"})
 
            ; No data or not started
-           (nil? eeg-data)
-           (do
-             (println "EEG data not available - recording started but no data stream yet")
-             {:up 0.0 :down 0.0 :error "EEG data stream not ready"})
+              (nil? eeg-data)
+              (do
+                (println "EEG data not available - recording started but no data stream yet")
+                {:up 0.0 :down 0.0 :error "EEG data stream not ready"})
 
            ; Data available but empty
-           (empty? eeg-data)
-           (do
-             (println "EEG data stream started but no data collected yet")
-             {:up 0.0 :down 0.0 :error "No EEG data collected yet"})
+              (empty? eeg-data)
+              (do
+                (println "EEG data stream started but no data collected yet")
+                {:up 0.0 :down 0.0 :error "No EEG data collected yet"})
 
            ; We have data - proceed with matching
-           :else
-           (let [sampling-rate ((:sampling-rate @state/state))
-                 last-n-samples (min (count eeg-data) sampling-rate)
-                 recent-data (take-last last-n-samples eeg-data)
-                 current-features (signature/extract-signature-features recent-data sampling-rate)
+              :else
+              (let [sampling-rate ((:sampling-rate @state/state))
+                    last-n-samples (min (count eeg-data) sampling-rate)
+                    recent-data (take-last last-n-samples eeg-data)
+                    current-features (signature/extract-signature-features recent-data sampling-rate)
 
-                 profile-name (or (:name ((:get-active-profile @state/state))) "default")
+                    profile-name (or (:name ((:get-active-profile @state/state))) "default")
 
-                 up-dir (fio/get-wave-lexicon-dir profile-name "pong/up")
-                 up-signatures (signature/load-wave-signatures-from-dir up-dir)
+                    up-dir (fio/get-wave-lexicon-dir profile-name "pong/up")
+                    up-signatures (signature/load-wave-signatures-from-dir up-dir)
 
-                 down-dir (fio/get-wave-lexicon-dir profile-name "pong/down")
-                 down-signatures (signature/load-wave-signatures-from-dir down-dir)
+                    down-dir (fio/get-wave-lexicon-dir profile-name "pong/down")
+                    down-signatures (signature/load-wave-signatures-from-dir down-dir)
 
-                 up-scores (map #(signature/calculate-signature-similarity current-features %) up-signatures)
-                 down-scores (map #(signature/calculate-signature-similarity current-features %) down-signatures)
+                    up-scores (map #(signature/calculate-signature-similarity current-features %) up-signatures)
+                    down-scores (map #(signature/calculate-signature-similarity current-features %) down-signatures)
 
-                 best-up-score (if (seq up-scores) (apply max up-scores) 0.0)
-                 best-down-score (if (seq down-scores) (apply max down-scores) 0.0)
+                    best-up-score (if (seq up-scores) (apply max up-scores) 0.0)
+                    best-down-score (if (seq down-scores) (apply max down-scores) 0.0)
 
-                 golden-tensor (get-in ((:get-active-profile @state/state)) [:golden-tensor])
+                    golden-tensor (get-in ((:get-active-profile @state/state)) [:golden-tensor])
 
-                 [calibrated-up calibrated-down]
-                 (if golden-tensor
-                   (let [spectral-calibration (get-in golden-tensor [:spectral :frequency-domain])
-                         calibration-factors (try
-                                               (-> (str (fio/get-wave-lexicon-dir profile-name "pong") "/category.edn")
-                                                   (fio/read-edn-file)
-                                                   (get-in [:summary :all :calibration-factors :average]))
-                                               (catch Exception _ nil))
-                         calibrated-up (if (and spectral-calibration calibration-factors)
-                                         (* best-up-score
-                                            (/ (+ (:alpha calibration-factors)
-                                                  (:beta calibration-factors))
-                                               2.0))
-                                         best-up-score)
+                    [calibrated-up calibrated-down]
+                    (if golden-tensor
+                      (let [spectral-calibration (get-in golden-tensor [:spectral :frequency-domain])
+                            calibration-factors (try
+                                                  (-> (str (fio/get-wave-lexicon-dir profile-name "pong") "/category.edn")
+                                                      (fio/read-edn-file)
+                                                      (get-in [:summary :all :calibration-factors :average]))
+                                                  (catch Exception _ nil))
+                            calibrated-up (if (and spectral-calibration calibration-factors)
+                                            (* best-up-score
+                                               (/ (+ (:alpha calibration-factors)
+                                                     (:beta calibration-factors))
+                                                  2.0))
+                                            best-up-score)
 
-                         calibrated-down (if (and spectral-calibration calibration-factors)
-                                           (* best-down-score
-                                              (/ (+ (:alpha calibration-factors)
-                                                    (:beta calibration-factors))
-                                                 2.0))
-                                           best-down-score)]
+                            calibrated-down (if (and spectral-calibration calibration-factors)
+                                              (* best-down-score
+                                                 (/ (+ (:alpha calibration-factors)
+                                                       (:beta calibration-factors))
+                                                    2.0))
+                                              best-down-score)]
 
-                     [(max 0.0 (min 1.0 calibrated-up))
-                      (max 0.0 (min 1.0 calibrated-down))])
+                        [(max 0.0 (min 1.0 calibrated-up))
+                         (max 0.0 (min 1.0 calibrated-down))])
 
-                   [best-up-score best-down-score])
+                      [best-up-score best-down-score])
 
-                 confidence-data {:up calibrated-up
-                                  :down calibrated-down}]
+                    confidence-data {:up calibrated-up
+                                     :down calibrated-down}]
 
-             (println "Confidence scores:" confidence-data)
-             confidence-data)))
-       (catch Exception e
-         (println "Error matching brain activity:" (.getMessage e))
-         {:up 0.0 :down 0.0 :error (.getMessage e)}))))
+                (println "Confidence scores:" confidence-data)
+                confidence-data)))
+          (catch Exception e
+            (println "Error matching brain activity:" (.getMessage e))
+            {:up 0.0 :down 0.0 :error (.getMessage e)}))))))
 
 #?(:clj
    (defn start-eeg-streaming-server [category]
      (try
-       (println "Server: Starting EEG data streaming for Pong")     
-         (lexi/start-category-recording! category)
-         (println "Started Pong EEG recording stream")
-         {:success true :streaming true})
+       (println "Server: Starting EEG data streaming for Pong")
+       (lexi/start-category-recording! category)
+       (println "Started Pong EEG recording stream")
+       {:success true :streaming true}
        (catch Exception e
          (println "Error starting EEG streaming:" (.getMessage e))
-         {:success false :streaming false :error (.getMessage e)})))
+         {:success false :streaming false :error (.getMessage e)}))))
 
 #?(:clj
    (defn stop-eeg-streaming-server [category]
@@ -294,7 +298,7 @@
 
      (when (and matching? streaming? connected?)
 
-       (let [confidence-data (e/server (match-brain-activity-server))]
+       (let [confidence-data (match-brain-activity-server)]
          (js/console.log "Raw confidence data received:" (clj->js confidence-data))
          (when confidence-data
            (if (:error confidence-data)

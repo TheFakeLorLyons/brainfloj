@@ -389,14 +389,16 @@
       (throw (Exception. "Category and signature name must be provided")))
 
     (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
+          _ (println "profile " profile-name)
           context (create-category-context profile-name category)
           category-recording-dir (str (fio/get-wave-lexicon-dir profile-name category)
-                             "/" category)
+                                      "/" category "_recordings")
           category-recording-info {:recording-type category
-                          :path category-recording-dir}]
+                                   :path category-recording-dir}]
 
       (when-not context
         (throw (Exception. "Failed to create recording context")))
+      (println "state: " @state/recording-context)
 
       ; Store context for recording
       (reset! state/recording-context context)
@@ -416,7 +418,7 @@
       (println "Started recording wave signature for" category)
       context)
     (catch Exception e
-      (println "Error starting wave signature recording:" (.getMessage e))
+      (println "Error starting category recording:" (.getMessage e))
       (.printStackTrace e)
       nil)))
 

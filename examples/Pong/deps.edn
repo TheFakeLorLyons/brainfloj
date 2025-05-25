@@ -2,7 +2,7 @@
            com.hyperfiddle/electric       {:mvn/version "v3-alpha-SNAPSHOT"}
            org.clojure/clojure            {:mvn/version "1.12.0"}
            org.clojure/clojurescript      {:mvn/version "1.11.121"}
-           com.github.thefakelorlyons/brainfloj {:mvn/version "0.0.59"
+           com.github.thefakelorlyons/brainfloj {:mvn/version "0.0.61"
                                                  :exclusions [info.sunng/ring-jetty9-adapter]}
            ring/ring                      {:mvn/version "1.11.0"} ; to serve the app
            ch.qos.logback/logback-classic {:mvn/version "1.4.14"}}
