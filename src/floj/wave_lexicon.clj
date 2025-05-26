@@ -359,7 +359,7 @@
   (try
     (let [timestamp (System/currentTimeMillis)
           category-dir (str (fio/get-wave-lexicon-dir profile-name category)
-                            "/" (str/lower-case category) "_recordings/")
+                            "/" (str/lower-case category) "_recordings")
           board-id (brainflow/get-board-id @state/shim)
           device-name (brainflow/get-device-name board-id)
           metadata {:recording-id (str category "_" timestamp)
