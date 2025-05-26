@@ -358,8 +358,9 @@
   [profile-name category]
   (try
     (let [timestamp (System/currentTimeMillis)
-          category-dir (str (fio/get-wave-lexicon-dir profile-name category) 
-                            "/" (str/lower-case category) "_" timestamp)
+          category-dir (str (fio/get-wave-lexicon-dir profile-name category)
+                            "/" (str/lower-case category) "_recordings/"
+                            (str/lower-case category) "_" timestamp)
           board-id (brainflow/get-board-id @state/shim)
           device-name (brainflow/get-device-name board-id)
           metadata {:recording-id (str category "_" timestamp)
@@ -391,8 +392,8 @@
     (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
           _ (println "profile " profile-name)
           context (create-category-context profile-name category)
-          category-recording-dir (str (fio/get-wave-lexicon-dir profile-name category)
-                                      "/" category "_recordings")
+          category-recording-dir (:lorfile-dir context)
+          _ (println "fixing the PATH!!! " category-recording-dir)
           category-recording-info {:recording-type category
                                    :path category-recording-dir}]
 
@@ -554,7 +555,8 @@ _ (println "features" features)
   "Stop recording a wave signature and process it"
   [category signature]
   (try
-    (let [context @state/recording-context]
+    (let [context @state/recording-context
+          _ (println "CTXT STOPPING : " context)]
 
           ; Add end tag
       (let [timestamp (System/currentTimeMillis)

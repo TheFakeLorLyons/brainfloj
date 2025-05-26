@@ -169,7 +169,7 @@
    (if @state/recording?
      (println "Already recording!")
      (do
-       (when-not (brainflow/board-ready? @state/shim)
+       (when-not (and (brainflow/board-ready? @state/shim) (not= custom-config nil))
          (println "Board not ready, attempting to reconnect with profile settings...")
          (let [active-profile ((:get-active-profile @state/state))]
            (api/connect-to-default-device active-profile)))
@@ -185,8 +185,12 @@
              current-session-name @state/current-session-name
              context (lor/write-metadata! current-session-name board-id custom-config)]
 
-         ; Store context for use during recording
-         (reset! state/recording-context context)
+         ; Store context for use during recording (only when no context exists already)
+         (when-not @state/recording-context
+           (let [board-id (brainflow/get-board-id @state/shim)
+                 current-session-name @state/current-session-name
+                 context (lor/write-metadata! current-session-name board-id custom-config)]
+             (reset! state/recording-context context)))
 
          ; Start the stream
          (brainflow/start-stream! @state/shim)
@@ -214,7 +218,7 @@
                  tags (or @state/tags [])
                  write-lor-fn (:write-lor! @state/state)]
              (write-lor-fn eeg-data tags board-id))))))
-     (reset! state/recording-context nil))) ; Clear recording contextb
+   (reset! state/recording-context nil))) ; Clear recording contextb
 
 (defn execute-command
   "Execute a command by its key"

@@ -415,7 +415,7 @@
 ; Helper function to ensure all categories are up to date
 (defn ensure-all-categories-aggregated!
   "Check all categories and aggregate those that need updating"
-  [profile-name]
+  [profile-name signature]
   (try
     (let [lexicon-dir (fio/get-wave-lexicon-dir profile-name)
           categories (->> (io/file lexicon-dir)
@@ -426,7 +426,7 @@
       (doseq [category categories]
         (when (needs-aggregation? profile-name category)
           (println "Category" category "needs aggregation, updating...")
-          (aggregate-after-recording! profile-name category)))
+          (aggregate-after-recording! profile-name category signature)))
 
       (println "All categories are now up to date"))
     (catch Exception e
