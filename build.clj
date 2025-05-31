@@ -7,7 +7,7 @@
 ;;; To install jar:  clj -T:build jar
 
 (def project 'com.github.thefakelorlyons/brainfloj)
-(def version  (format "0.0.68"))
+(def version  (format "0.0.69"))
 (def class-dir "target/classes")
 (def basis (b/create-basis {:project "deps.edn"}))
 (def uber-file (format "target/%s-%s-standalone.jar" project version))

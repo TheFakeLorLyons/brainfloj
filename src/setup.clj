@@ -1,5 +1,8 @@
 (ns setup
-  (:require [brainflow-java.core :as bf]))
+  (:require [brainflow-java.core :as bf]
+            [clojure.edn :as edn]
+            [clojure.java.io :as io]
+            [zprint.core :as zprint]))
 
 ; Run this prior to publish anything using brainfloj
 (defn clean-deps 
@@ -15,7 +18,10 @@
                          (assoc-in [:deps 'brainflow/brainflow] (:brainflow-dep config))
                          (assoc-in [:aliases :dev :jvm-opts] (:jvm-opts config)))]
 
-    (spit deps-file (with-out-str (clojure.pprint/pprint updated-deps)))))
+    (spit deps-file
+          (zprint/zprint-str updated-deps
+                             {:map {:sort? false}
+                              :width 80}))))
 
 (defn setup-derived-project! []
   "Setup a project that depends on brainfloj by copying existing brainflow config"
