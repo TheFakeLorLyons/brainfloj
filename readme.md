@@ -7,7 +7,8 @@ The codebase is organized for clarity and modularity:
    - All primary source code lives in src/floj, including the core logic for interfacing with BrainFlow.
    - Tests are located in src/tests, and they’re run using the Cognitect test runner for a straightforward and idiomatic Clojure testing workflow.
    - The examples/ directory contains runnable demos built using BrainFloj — including a prototype of a brain-controlled Pong game, with more examples on the way.
-   - Native BrainFlow dependencies (the JAR and native libraries) are expected to be placed in a lib/ directory, though you can customize this as needed in your deps.edn.
+   - Native BrainFlow dependencies __need to be downloaded__ via the `setup.clj` file located directly in `src/`. Running `clj -m setup` at the command line, or evaluating `(setup-brainfloj!)` via the repl.
+      - Note that it is required to run `(clean-deps)` in order to remove any local paths that remain in your deps.edn file prior to pushing any derivative works in order to ensure that there are no conflicting classpaths leftover.
    - Configuration is managed via deps.edn, following standard Clojure CLI conventions.
 
 ## Floj CLI
