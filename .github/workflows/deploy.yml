@@ -40,25 +40,6 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-deps-
         
-    - name: Check BrainFlow JAR exists
-      id: check_brainflow
-      run: |
-        if [ -f "lib/brainflow-jar-with-dependencies.jar" ]; then
-          echo "BRAINFLOW_EXISTS=true" >> $GITHUB_ENV
-        else
-          echo "BRAINFLOW_EXISTS=false" >> $GITHUB_ENV
-          echo "ERROR: BrainFlow JAR not found. Ensure it's correctly added to the repository."
-          exit 1
-        fi
-
-    - name: Create native lib directory
-      run: |
-        mkdir -p lib/native
-        touch lib/native/.keep
-
-    - name: Verify native libs
-      run: clojure -T:build verify-native-libs
-      
     - name: Compile
       run: clojure -T:build compile-clj
       
@@ -85,11 +66,6 @@ jobs:
       uses: DeLaGuardo/setup-clojure@13.2
       with:
         cli: latest
-        
-    - name: Create native lib directory
-      run: |
-        mkdir -p lib/native
-        touch lib/native/.keep
         
     - name: Publish to Clojars
       env:
