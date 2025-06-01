@@ -221,7 +221,8 @@
 (defn compute-frequency-domain
   "Calculate frequency domain power in standard EEG bands"
   [magnitudes]
-  (let [resolution (/ api/CURRENT_SRATE (count magnitudes))
+  (let [SRATE (api/get-current-sample-rate)
+        resolution (/ SRATE (count magnitudes))
         hz->bin (fn [hz] (int (/ hz resolution)))
         delta-band (subvec magnitudes (hz->bin 0.5) (inc (hz->bin 4)))
         theta-band (subvec magnitudes (inc (hz->bin 4)) (inc (hz->bin 8)))
@@ -360,9 +361,11 @@
         projected-signal (mapv #(project-sample % (:eigenvectors pca-result)) normalized-data)
         projected-channels (vec (apply map vector projected-signal))
 
+        SRATE (api/get-current-sample-rate)
+
         fft-results (mapv (fn [channel]
                             (try
-                              (fft/perform-fft (vec channel) api/CURRENT_SRATE)
+                              (fft/perform-fft (vec channel) SRATE)
                               (catch Exception e
                                 (println "FFT error on channel:" (.getMessage e))
                                 {:frequencies [] :magnitudes []})))
@@ -378,11 +381,13 @@
                                         mags)))
                               fft-results)
 
+        SRATE (api/get-current-sample-rate)
+
         frequency-domains (mapv (fn [channel-magnitudes]
                                   (when (seq channel-magnitudes)
                                     (let [scale-factor (/ 1.0 (max 1.0 (apply max 0.0001 channel-magnitudes)))
                                           scaled-magnitudes (mapv #(* % scale-factor) channel-magnitudes)
-                                          resolution (/ api/CURRENT_SRATE (count scaled-magnitudes))
+                                          resolution (/ SRATE (count scaled-magnitudes))
                                           hz->bin (fn [hz] (max 0 (min (dec (count scaled-magnitudes))
                                                                        (int (/ hz resolution)))))
                                           delta-range [(hz->bin 0.5) (hz->bin 4)]
@@ -600,7 +605,8 @@
 (defn extract-signal-features
   "Extract key features from a signal for refraction calculation"
   [signal]
-  (let [segments (partition api/CURRENT_SRATE 128 signal)
+  (let [SRATE (api/get-current-sample-rate)
+        segments (partition SRATE 128 signal)
         features (mapv (fn [segment]
                          (let [count-seg (count segment)]
                            (if (> count-seg 0)

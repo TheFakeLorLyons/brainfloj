@@ -1,5 +1,6 @@
 (ns floj.stream-manager
-  (:require [floj.brainflow.board-shim :as brainflow]
+  (:require [floj.api :as api]
+            [floj.brainflow.board-shim :as brainflow]
             [floj.state :as state])
   (:import [brainflow BrainFlowPresets]
            [brainflow BoardShim]))
@@ -135,7 +136,6 @@
         (println "Error getting channel indices:" (.getMessage e))
         nil))))
 
-
 (defn extract-channel-data
   "Extract specific channel data from the full board data.
    Now correctly handles BrainFlow's data format where first array is timestamps.
@@ -148,7 +148,8 @@
              (> (count board-data) 1)
              (every? sequential? board-data))
       ; Handle BrainFlow format directly - skip the first array which is timestamps
-      (let [eeg-data (vec (take 5 board-data))]
+      (let [channel-count (count (api/get-current-channels))
+            eeg-data (vec (take (+ channel-count 1) board-data))] ; +1 to keep timestamps
         {:eeg (transpose-data eeg-data)         ; Convert from [channels][samples] to [samples][channels]
          :timestamp (vec (first board-data))})  ; Keep timestamps separately if needed
 

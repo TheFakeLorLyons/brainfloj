@@ -134,30 +134,6 @@
        (.printStackTrace e)
        nil))))
 
-(defn get-metadata-summary
-  "Get a summary of the metadata for a lor directory including calibration info"
-  [dir-path]
-  (try
-    (let [metadata-file (str dir-path "/recording_metadata.edn")
-          metadata (edn/read-string (slurp metadata-file))
-          start-time (:start-time metadata)
-          board-type (:device-type metadata)
-          channels (:channels metadata)
-          sampling-rate (:sampling-rate metadata)
-          num-channels (count channels)
-          calibration-info (when-let [cal-index (:calibration-index metadata)]
-                             {:profile (:calibration-profile-name metadata "default")
-                              :band-distribution (:band-distribution cal-index)
-                              :timestamp (:timestamp cal-index)})]
-      (cond-> {:start-time start-time
-               :formatted-start (format-date start-time)
-               :board-type board-type
-               :sampling-rate sampling-rate
-               :channel-count num-channels}
-        calibration-info (assoc :calibration calibration-info)))
-    (catch Exception e
-      {:error (.getMessage e)})))
-
 (defn write-tags!
   "Write tags file to the lorfile directory"
   [lorfile-dir tags]
@@ -240,10 +216,10 @@
           (doseq [idx (range (count eeg-channels))]
             (let [channel-idx (nth eeg-channels idx)
                   _ (println "Processing channel idx:" channel-idx "at position:" idx)
-                  ;; Extract data for this specific channel from all samples
+                  ; Extract data for this specific channel from all samples
                   channel-data (mapv (fn [sample]
-                                       ;; Each sample is a vector where first element could be timestamp
-                                       ;; and subsequent elements are channel values
+                                       ; Each sample is a vector where first element could be timestamp
+                                       ; and subsequent elements are channel values
                                        (if (and (vector? sample) (> (count sample) (inc idx)))
                                          (nth sample (inc idx))
                                          0.0))
@@ -267,7 +243,6 @@
                  ", eeg-channels: " (boolean eeg-channels)
                  ", lorfile-dir: " lorfile-dir)
         nil))))
-
 
 (defn read-lor-channel-file
   "Read a single .lor channel file, parsing the header and binary data (doubles)"
@@ -293,6 +268,53 @@
                          (let [value (.readDouble in)]
                            (recur (conj values value)))))]
             (assoc header :data data :header header)))))))
+
+(defn get-metadata-summary
+  "Get a summary of the metadata for a lor directory including calibration info and duration"
+  [dir-path]
+  (try
+    (let [metadata-file (str dir-path "/recording_metadata.edn")
+          metadata (edn/read-string (slurp metadata-file))
+          start-time (:start-time metadata)
+          board-type (:device-type metadata)
+          num-channels (:channel-count metadata)
+          sampling-rate (:sampling-rate metadata)
+
+          duration-info (try
+                          (let [lor-files (->> (io/file dir-path)
+                                               (.listFiles)
+                                               (filter #(.endsWith (.getName %) ".lor"))
+                                               (sort #(compare (.getName %1) (.getName %2))))
+                                first-lor-file (first lor-files)]
+
+                            (when first-lor-file
+                              (let [channel-data (read-lor-channel-file (.getPath first-lor-file) false)
+                                    data-points (:data-points channel-data)
+                                    duration-seconds (double (/ data-points sampling-rate))  ; Convert to double
+                                    duration-ms (* duration-seconds 1000)]
+
+                                {:duration-seconds duration-seconds
+                                 :duration-ms duration-ms
+                                 :duration-str (format "%.1fs" duration-seconds)})))
+                          (catch Exception e
+                            (println "Error calculating duration for" dir-path ":" (.getMessage e))
+                            (.printStackTrace e)
+                            {:duration-str "Unknown"}))
+
+          calibration-info (when-let [cal-index (:calibration-index metadata)]
+                             {:profile (:calibration-profile-name metadata "default")
+                              :band-distribution (:band-distribution cal-index)
+                              :timestamp (:timestamp cal-index)})]
+
+      (cond-> {:start-time start-time
+               :formatted-start (format-date start-time)
+               :board-type board-type
+               :sampling-rate sampling-rate
+               :channel-count num-channels}
+        duration-info (merge duration-info)
+        calibration-info (assoc :calibration calibration-info)))
+    (catch Exception e
+      {:error (.getMessage e)})))
 
 (defn print-tabular-lor-data
   "Print .lor data in a tabular format with all channels side by side"

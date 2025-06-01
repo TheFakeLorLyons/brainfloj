@@ -294,7 +294,7 @@
                     :recorded-at (java.util.Date.)
                     :device-type device-name
                     :board-id board-id
-                    :sampling-rate api/CURRENT_SRATE
+                    :sampling-rate (api/get-current-sample-rate)
                     :category (name category)
                     :signature-name (name signature-name)
                     :is-wave-signature true
@@ -367,7 +367,7 @@
                     :recorded-at (java.util.Date.)
                     :device-type device-name
                     :board-id board-id
-                    :sampling-rate api/CURRENT_SRATE
+                    :sampling-rate (api/get-current-sample-rate)
                     :category-name (name category)
                     :is-category true
                     :version "1.0"
@@ -542,7 +542,8 @@ _ (println "features" features)
   "Process recorded EEG data into a wave signature"
   [eeg-data recording-dir metadata]
   (try
-    (let [features (extract-signature-features eeg-data api/CURRENT_SRATE)
+    (let [SRATE (api/get-current-sample-rate)
+          features (extract-signature-features eeg-data SRATE)
           feature-path (str recording-dir "/signature_features.edn")]
       (spit feature-path (pr-str features))
       (create-signature-template features))
@@ -867,7 +868,8 @@ _ (println "features" features)
   "Calculate similarity between temporal patterns"
   [current-stats template-patterns]
   (try
-    (let [channel-similarities (for [i (range api/CURRENT_CHANNEL_COUNT)
+    (let [CURRENT_CHANNEL_COUNT (count (api/get-current-channels))
+          channel-similarities (for [i (range CURRENT_CHANNEL_COUNT)
                                      :let [current-chan (nth current-stats i)
                                            template-chan (nth template-patterns i)]]
                                  (let [mean-diff (Math/abs (- (:mean current-chan)
@@ -880,8 +882,8 @@ _ (println "features" features)
                                   ; Average for this channel
                                    (/ (+ mean-sim std-sim) 2.0)))
           ;; Average across channels
-          overall-similarity (if (pos? api/CURRENT_CHANNEL_COUNT)
-                               (/ (reduce + channel-similarities) api/CURRENT_CHANNEL_COUNT)
+          overall-similarity (if (pos? CURRENT_CHANNEL_COUNT)
+                               (/ (reduce + channel-similarities) CURRENT_CHANNEL_COUNT)
                                0.5)]
       overall-similarity)
     (catch Exception e
@@ -1142,9 +1144,10 @@ _ (println "features" features)
   "Match current brain activity against wave signatures"
   [current-data]
   (try
-    (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
+    (let [SRATE (api/get-current-sample-rate)
+          profile-name (or (:name ((:get-active-profile @state/state))) "default")
           normalized-data (stream/normalize-data-format current-data)
-          current-features (extract-signature-features normalized-data api/CURRENT_SRATE)
+          current-features (extract-signature-features normalized-data SRATE)
           categories (list-wave-signature-categories)]
 
       (if (empty? categories)

@@ -97,10 +97,10 @@
       (reset! last-calibration-update current-time)
       (let [recent-data @state/eeg-data
             profile ((:get-active-profile @state/state))
-            sampling-rate (brainflow/get-sampling-rate (brainflow/get-board-id @state/shim))
-
+            sampling-rate (api/get-current-sample-rate)
+            eeg-data-only (mapv :eeg recent-data)
             new-calibration-index (process-calibration
-                                   recent-data
+                                   eeg-data-only
                                    sampling-rate
                                    profile)]
 
@@ -169,7 +169,7 @@
    (if @state/recording?
      (println "Already recording!")
      (do
-       (when-not (and (brainflow/board-ready? @state/shim) (not= custom-config nil))
+       (when-not (brainflow/board-ready? @state/shim)
          (println "Board not ready, attempting to reconnect with profile settings...")
          (let [active-profile ((:get-active-profile @state/state))]
            (api/connect-to-default-device active-profile)))
@@ -185,19 +185,14 @@
              current-session-name @state/current-session-name
              context (lor/write-metadata! current-session-name board-id custom-config)]
 
-         ; Store context for use during recording (only when no context exists already)
-         (when-not @state/recording-context
-           (let [board-id (brainflow/get-board-id @state/shim)
-                 current-session-name @state/current-session-name
-                 context (lor/write-metadata! current-session-name board-id custom-config)]
-             (reset! state/recording-context context)))
+         ; Store context for use during recording
+         (reset! state/recording-context context)
 
          ; Start the stream
          (brainflow/start-stream! @state/shim)
 
          ; Start recording loop
          (record-loop! 100))))))
-
 
 (defn stop-recording!
   "Stop the current recording, with option to skip file writing for calibration"

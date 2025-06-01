@@ -15,15 +15,6 @@
 (defn get-current-channels
   []
   (brainflow/get-channel-data :eeg @state/shim))
-#_(defn get-current-board-id
-    []
-    (brainflow/get-board-id (brainflow/get-board-id @state/shim)))
-
-
-(def CURRENT_SRATE (get-current-sample-rate))
-(def CURRENT_CHANNELS (get-current-channels))
-(def CURRENT_CHANNEL_COUNT (count (get-current-channels)))
-#_(def CURRENT_BOARD_ID (get-current-board-id))
 
 (defn compare-and-select-profile-name []
   (let [active-profile-name ((:get-active-profile @state/state))]
@@ -51,11 +42,11 @@
       (try
         (let [board-id (brainflow/get-board-id shim)
               board-type (get id/board-types board-id "Unknown Board")
-              channels CURRENT_CHANNELS
-              num-channels CURRENT_CHANNEL_COUNT
+              channels (get-current-channels)
+              num-channels (count (get-current-channels))
               accel-channels (brainflow/get-channel-data :accel board-id)
               gyro-channels (brainflow/get-channel-data :gyro board-id)
-              sampling-rate CURRENT_SRATE
+              sampling-rate (get-current-sample-rate)
               is-prepared (brainflow/board-ready? shim)
               is-recording @state/recording?]
           {:board-id board-id
@@ -71,35 +62,52 @@
           {:error (.getMessage e)})))))
 
 (defn switch-board!
-  "Debug version of switch-board! with more logging"
+  "Switch board with proper connection verification"
   [board-id params]
   (try
     (let [current-board @state/shim]
-      (if (and current-board (= (brainflow/get-board-id current-board) board-id))
+      (println "DEBUG: Checking current board state...")
+      (println "  - Board exists:" (not (nil? current-board)))
+
+      (when current-board
+        (try
+          (let [current-id (brainflow/get-board-id current-board)
+                is-ready (brainflow/board-ready? current-board)]
+            (println "  - Current board ID:" current-id)
+            (println "  - Target board ID:" board-id)
+            (println "  - Board ready:" is-ready)
+            (println "  - IDs match:" (= current-id board-id)))
+          (catch Exception e
+            (println "  - Error checking board state:" (.getMessage e)))))
+
+      ; Only reuse board if it's actually working
+      (if (and current-board
+               (try
+                 (let [current-id (brainflow/get-board-id current-board)
+                       is-ready (brainflow/board-ready? current-board)]
+                   (and (= current-id board-id) is-ready))
+                 (catch Exception e
+                   (println "Current board failed verification:" (.getMessage e))
+                   false)))
         (do
-          (println "Already connected to the requested board type:" (get id/board-types board-id "Unknown Board"))
+          (println "Reusing existing working board:" (get id/board-types board-id "Unknown Board"))
           current-board)
         (do
           (println "Switching to" (get id/board-types board-id "Unknown Board") "...")
-          ; Release current board if exists
+
+          ; Clean up current board completely
           (when current-board
-            (println "Releasing current board...")
+            (println "Cleaning up current board...")
             (try
               (when @state/recording?
                 (println "Stopping current recording first...")
                 (.stop_stream current-board)
                 (reset! state/recording? false))
               (.release_session current-board)
+              (reset! state/shim nil) ; Clear the shim reference
               (catch Exception e
                 (println "Warning during board cleanup:" (.getMessage e)))))
 
-          (println "Creating board with parameters:")
-          (println "  - Board ID:" board-id)
-          (println "  - MAC Address:" (.get_mac_address params))
-          (println "  - Serial Port:" (.get_serial_port params))
-          (println "  - Other Info:" (.get_other_info params))
-
-          ; Create new board directly
           (println "Creating new board connection...")
           (try
             (let [new-board-shim (brainflow.BoardShim. board-id params)]
@@ -107,19 +115,22 @@
               (try
                 (.prepare_session new-board-shim)
                 (reset! state/shim new-board-shim)
-                (println "Successfully switched to new board:" (id/board-types board-id))
+                (println "Successfully switched to new board:" (get id/board-types board-id "Unknown Board"))
                 new-board-shim
                 (catch Exception e
                   (println "Error in prepare_session:" (.getMessage e))
-                  (.printStackTrace e)))
-              nil)
+                  (.printStackTrace e)
+                  ; Clean up failed board
+                  (try (.release_session new-board-shim) (catch Exception _))
+                  nil)))
             (catch Exception e
               (println "Error creating BoardShim:" (.getMessage e))
-              (.printStackTrace e))))))
+              (.printStackTrace e)
+              nil)))))
     (catch Exception e
       (println "Failed to switch board:" (.getMessage e))
-      (.printStackTrace e)))
-  nil)
+      (.printStackTrace e)
+      nil)))
 
 
 (defn connect!
@@ -129,11 +140,15 @@
     (let [params (params/create-brainflow-input-params
                   :mac-address mac-address
                   :serial-port com-port
-                  :other-info "bled112")]
-
-      (switch-board! board-id params)
-      (println "Successfully connected to board!")
-      true)
+                  :other-info "bled112")
+          result (switch-board! board-id params)]
+      (if result
+        (do
+          (println "Successfully connected to board!")
+          true)
+        (do
+          (println "Failed to connect to board")
+          false)))
     (catch Exception e
       (println "Failed to create board connection:" (.getMessage e))
       false)))
@@ -148,7 +163,8 @@
                                                         :board-id board-id
                                                         :mac-address mac-address
                                                         :com-port com-port
-                                                        :connection-method connection-method})]
+                                                        :connection-method connection-method
+                                                        :configured true})]
         (spit profile-path (pr-str updated-profile))
         updated-profile))))
 
@@ -202,7 +218,7 @@
   (let [device-config (:bci-device profile)]
     (and device-config
          (map? device-config)
-         (:board-id device-config)  ;; Board ID is required for connection
+         (:board-id device-config)
          (not (nil? (:mac-address device-config)))
          (not (nil? (:com-port device-config)))
          (or (seq (:mac-address device-config))
@@ -233,6 +249,12 @@
           (println "No BCI device configured in this profile")
           false)))))
 
+(defn connect-synthetic-board! []
+  "Direct connection to synthetic board bypassing parameter setup"
+  (println "Connecting directly to synthetic board...")
+  (let [empty-params (params/create-brainflow-input-params)]
+    (switch-board! -1 empty-params)))
+
 (defn connect-to-default-device
   [profile]
   (if (profile-has-bci-device? profile)
@@ -240,16 +262,22 @@
       (println "\nYou have a BCI device configured in your profile.")
       (print "Would you like to connect to it? (y/n): ")
       (flush)
-      (let [response (read-line)]
-        (when (or (= response "y") (= response "Y"))
-          (connect-from-profile! profile))))
+      (let [response (str/lower-case (read-line))]
+        (if (= response "y")
+          (connect-from-profile! profile)
+          (do
+            (println "Using synthetic board instead...")
+            (connect-synthetic-board!)))))
     (do
       (println "\nYou don't have a BCI device configured in your profile.")
       (print "Would you like to configure one now? (y/n): ")
       (flush)
       (let [response (read-line)]
-        (when (or (= response "y") (= response "Y"))
-          (configure-bci-device!))))))
+        (if (or (= response "y") (= response "Y"))
+          (configure-bci-device!)
+          (do
+            (println "Using synthetic board for testing...")
+            (connect-synthetic-board!)))))))
 
 (defn initialize-brainflow! []
   (state/register-fn! :release-board!    brainflow/release-session!)

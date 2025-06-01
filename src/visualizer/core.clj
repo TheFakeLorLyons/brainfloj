@@ -36,8 +36,7 @@
           (when (seq data-point)
             (swap! state/eeg-data conj data-point)
 
-            ;; Based on the output, position 1 contains EEG values
-            ;; Let's extract data from there if it exists
+            ; Extract data from board if it exists
             (if (and (>= (count data-point) 2)
                      (vector? (nth data-point 1))
                      (seq (nth data-point 1)))
