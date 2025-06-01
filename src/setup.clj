@@ -23,22 +23,30 @@
                              {:map {:sort? false}
                               :width 80}))))
 
-(defn setup-derived-project! 
+(defn setup-derived-project!
   "Setup a project that depends on brainfloj by copying existing brainflow config"
   []
   (println "Setting up brainfloj-derived project...")
 
-  ; Look for brainflow config in user's home brainfloj setup
-  (let [user-deps-file (io/file (System/getProperty "user.home") ".brainflow-java" "generated-config.edn")]
-    (if (.exists user-deps-file)
-      (let [brainflow-config (edn/read-string (slurp user-deps-file))]
-        (copy-brainflow-config! brainflow-config)
-        (println "✓ Copied brainflow configuration from existing setup")
-        (println "Restart with: clojure -A:flow"))
+  (let [deps-file (io/file "deps.edn")]
+    (if (.exists deps-file)
+      (let [current-deps (edn/read-string (slurp deps-file))
+            brainflow-dep (get-in current-deps [:deps 'brainflow/brainflow])
+            flow-jvm-opts (get-in current-deps [:aliases :flow :jvm-opts])]
+
+        (if brainflow-dep
+          (let [brainflow-config {:brainflow-dep brainflow-dep
+                                  :jvm-opts (or flow-jvm-opts [])}]
+            (copy-brainflow-config! brainflow-config)
+            (println "✓ Copied brainflow configuration from current project")
+            (println "Restart with: clojure -A:flow"))
+          (do
+            (println "❌ No brainflow/brainflow dependency found in current deps.edn!")
+            (println "Please run brainfloj setup first:"))))
       (do
-        (println "❌ No existing brainflow setup found!")
+        (println "❌ No deps.edn found in current directory!")
         (println "Please run brainfloj setup first:")
-        (println "  clojure -Sdeps '{:deps {com.github.thefakelorlyons/brainfloj {:mvn/version \"0.0.70\"}}}' -A:setup")))))
+        (println "  clojure -Sdeps '{:deps {com.github.thefakelorlyons/brainfloj {:mvn/version \"0.0.71\"}}}' -A:setup")))))
 
 ; Run this in order to download and setup the necessary brainflow-java dependencies
 (defn setup-brainfloj! []
