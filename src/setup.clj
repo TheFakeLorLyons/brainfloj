@@ -23,8 +23,9 @@
                              {:map {:sort? false}
                               :width 80}))))
 
-(defn setup-derived-project! []
+(defn setup-derived-project! 
   "Setup a project that depends on brainfloj by copying existing brainflow config"
+  []
   (println "Setting up brainfloj-derived project...")
 
   ; Look for brainflow config in user's home brainfloj setup
@@ -37,7 +38,7 @@
       (do
         (println "❌ No existing brainflow setup found!")
         (println "Please run brainfloj setup first:")
-        (println "  clojure -Sdeps '{:deps {com.github.thefakelorlyons/brainfloj {:mvn/version \"0.0.61\"}}}' -A:setup")))))
+        (println "  clojure -Sdeps '{:deps {com.github.thefakelorlyons/brainfloj {:mvn/version \"0.0.70\"}}}' -A:setup")))))
 
 ; Run this in order to download and setup the necessary brainflow-java dependencies
 (defn setup-brainfloj! []
