@@ -28,25 +28,31 @@
   []
   (println "Setting up brainfloj-derived project...")
 
-  (let [deps-file (io/file "deps.edn")]
-    (if (.exists deps-file)
-      (let [current-deps (edn/read-string (slurp deps-file))
-            brainflow-dep (get-in current-deps [:deps 'brainflow/brainflow])
-            flow-jvm-opts (get-in current-deps [:aliases :flow :jvm-opts])]
-
-        (if brainflow-dep
-          (let [brainflow-config {:brainflow-dep brainflow-dep
-                                  :jvm-opts (or flow-jvm-opts [])}]
+  ; Look for brainflow config in the standard location
+  (let [brainflow-dir (io/file (System/getProperty "user.home") ".brainflow-java")]
+    (if (.exists brainflow-dir)
+      ; Find the version directory (e.g., "5.16.0") and look for config
+      (let [version-dirs (->> (.listFiles brainflow-dir)
+                              (filter #(.isDirectory %))
+                              (sort)
+                              reverse)
+            config-file (->> version-dirs
+                             (map #(io/file % "brainflow-config.edn"))
+                             (filter #(.exists %))
+                             first)]
+        (if config-file
+          (let [brainflow-config (edn/read-string (slurp config-file))]
             (copy-brainflow-config! brainflow-config)
-            (println "✓ Copied brainflow configuration from current project")
+            (println "✓ Copied brainflow configuration from existing setup")
+            (println (str "✓ Using config from: " (.getAbsolutePath config-file)))
             (println "Restart with: clojure -A:flow"))
           (do
-            (println "❌ No brainflow/brainflow dependency found in current deps.edn!")
+            (println "❌ No brainflow-config.edn found in any version directory!")
             (println "Please run brainfloj setup first:"))))
       (do
-        (println "❌ No deps.edn found in current directory!")
-        (println "Please run brainfloj setup first:")
-        (println "  clojure -Sdeps '{:deps {com.github.thefakelorlyons/brainfloj {:mvn/version \"0.0.71\"}}}' -A:setup")))))
+        (println "❌ No .brainflow-java directory found!")
+        (println "Please run brainflow-java setup first:")
+        (println "`clj -m setup` in the CLI")))))
 
 ; Run this in order to download and setup the necessary brainflow-java dependencies
 (defn setup-brainfloj! []
