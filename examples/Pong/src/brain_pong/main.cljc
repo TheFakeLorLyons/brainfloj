@@ -57,8 +57,8 @@
            (reset! frame-id-atom nil))
 
          (when matching?
-           (bci/stop-activity-matching!)
-           (bci/stop-eeg-streaming!))))
+           #_(bci/stop-activity-matching!)
+           #_(bci/stop-eeg-streaming!))))
 
      nil)))
 

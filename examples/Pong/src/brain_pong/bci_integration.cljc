@@ -125,7 +125,7 @@
              speed (* base-speed normalized-confidence)]
          speed))))
 
-#?(:clj
+#_#?(:clj
    (defn match-brain-activity-impl []
      (try
        (let [recording? @state/recording?

@@ -107,7 +107,7 @@
            (js/clearInterval interval)
            (swap! pong-state/state assoc-in [:bci :match-interval] nil)))))))
 
-(e/defn StartStreamingWhenMatching []
+#_(e/defn StartStreamingWhenMatching []
   (e/client
    (let [state (e/watch pong-state/state)
          connected? (get-in state [:bci :device-connected?])
@@ -121,7 +121,7 @@
          (when (:success stream-result)
            (swap! pong-state/state assoc-in [:bci :streaming?] true)))))))
 
-(e/defn StopStreamingWhenNotMatching []
+#_(e/defn StopStreamingWhenNotMatching []
   (e/client
    (let [state (e/watch pong-state/state)
          matching? (get-in state [:bci :matching?])
@@ -134,7 +134,7 @@
          (js/console.log "Stream stop result:" (clj->js stop-result))
          (swap! pong-state/state assoc-in [:bci :streaming?] false))))))
 
-(e/defn PollBrainActivityWhenMatching []
+#_(e/defn PollBrainActivityWhenMatching []
   (e/client
    (let [state (e/watch pong-state/state)
          connected? (get-in state [:bci :device-connected?])
@@ -162,8 +162,8 @@
 
      (ConnectWhenPending)
      (DisconnectWhenPending)
-     (StartStreamingWhenMatching)
-     (StopStreamingWhenNotMatching)
+     #_(StartStreamingWhenMatching)
+     #_(StopStreamingWhenNotMatching)
      #_(PollBrainActivityWhenMatching)
 
      (dom/div
@@ -280,7 +280,7 @@
                             (swap! pong-state/state assoc-in [:bci :sensitivity] value)))
                 nil)))))))
 
-(e/defn CalibrationControl []
+#_(e/defn CalibrationControl []
   (e/client
    (let [state (e/watch pong-state/state)
          connected? (get-in state [:bci :device-connected?])
