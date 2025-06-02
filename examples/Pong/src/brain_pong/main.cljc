@@ -4,12 +4,12 @@
             [brain-pong.bci-integration :as bci]
             [brain-pong.game-state :as pong-state]
             [brain-pong.components :as component]
-            [brain-pong.signature :as signature]
+            #?(:clj [brain-pong.signature :as signature])
             #?(:clj [floj.brainflow.board-ids :as bids])))
 
 (def client-state (atom nil))
 
-(e/defn GameLoop [category]
+(e/defn GameLoop []
   (e/client
    (let [state (e/watch pong-state/state)
          playing? (get-in state [:game :playing?])
@@ -31,9 +31,8 @@
        (js/console.log "Stopping BCI brain activity matching")
        (swap! pong-state/state assoc-in [:bci :matching?] false))
 
-     (bci/PollBrainActivity category)
-
      (when playing?
+       
        (js/console.log "Starting new game loop")
        (letfn [(game-loop []
                           (let [keys-pressed (get @pong-state/state :keys-pressed #{})]
@@ -63,7 +62,6 @@
 
      nil)))
 
-; Alternative approach - periodic status checker
 (e/defn PeriodicStatusChecker []
   (e/client
    (let [timer-atom (atom 0)
@@ -75,7 +73,7 @@
        (reset! interval-id
                (js/setInterval
                 (fn []
-                  ; Just increment the timer - this will trigger Electric reactivity
+                  ; Increments timer, triggering Electric reactivity
                   (swap! timer-atom inc))
                 5000)))
 
@@ -98,8 +96,7 @@
                   (not pending-disconnect?))
          (js/console.log "Running periodic status check, timer:" timer-val)
 
-         ; Now we can safely call the Electric server function
-
+         ; Now possible to call the Electric server function
          (let [status (e/server (bci/get-device-status-server))]
            (js/console.log "Periodic status result:" (clj->js status))
            (when (:connected status)
@@ -148,7 +145,7 @@
         (dom/props {:class "pong-container"})
         (component/Instructions)
         (component/PongCourt)
-        (GameLoop "pong")
+        (GameLoop)
       
         (dom/div
          (dom/props {:class "bci-area"})

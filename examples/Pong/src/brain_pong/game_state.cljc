@@ -20,9 +20,9 @@
           :score {:player 0 :ai 0}
           :playing? false
           :training-mode? false
-          :current-training nil
-          :bci-confidence {:up 0.0 :down 0.0}}
-   :bci  {:device-connected? false
+          :current-training nil}
+   :bci  {:confidence {:up 0.0 :down 0.0}
+          :device-connected? false
           :up-patterns []
           :down-patterns []}
    :keys-pressed #{}})
@@ -297,7 +297,7 @@
     (move-ai-paddle!)
 
     ; Check for BCI input and move paddle based on confidence values
-    (let [bci-confidence (get-in @state [:game :bci-confidence])
+    (let [bci-confidence (get-in @state [:bci :confidence])
           up-confidence (:up bci-confidence)
           down-confidence (:down bci-confidence)
           threshold 0.6]
@@ -310,6 +310,7 @@
     #?(:cljs (js/console.log "Game tick"))
     (update-ball!)
     (move-ai-paddle!)))
+
 #?(:cljs
    (defn handle-key-down [e]
      (let [key (.-key e)]

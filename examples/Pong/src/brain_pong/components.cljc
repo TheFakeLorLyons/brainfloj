@@ -2,9 +2,9 @@
   (:require
    [hyperfiddle.electric3 :as e]
    [hyperfiddle.electric-dom3 :as dom]
-   #?(:clj [floj.profiles :as profiles])
    [brain-pong.game-state :as pong-state]
-   [brain-pong.bci-integration :as bci]))
+   [brain-pong.bci-integration :as bci]
+   #?(:clj [floj.profiles :as profiles])))
 
 (e/defn BrainConnectionStatus []
   (e/client
@@ -107,6 +107,47 @@
            (js/clearInterval interval)
            (swap! pong-state/state assoc-in [:bci :match-interval] nil)))))))
 
+(e/defn StartStreamingWhenMatching []
+  (e/client
+   (let [state (e/watch pong-state/state)
+         connected? (get-in state [:bci :device-connected?])
+         matching? (get-in state [:bci :matching?])
+         streaming? (get-in state [:bci :streaming?])]
+     ;; Start streaming when we start matching (if not already streaming)
+     (when (and connected? matching? (not streaming?))
+       (js/console.log "Starting EEG streaming for brain activity matching")
+       (let [stream-result (e/server (bci/start-eeg-streaming-server))]
+         (js/console.log "Stream start result:" (clj->js stream-result))
+         (when (:success stream-result)
+           (swap! pong-state/state assoc-in [:bci :streaming?] true)))))))
+
+(e/defn StopStreamingWhenNotMatching []
+  (e/client
+   (let [state (e/watch pong-state/state)
+         matching? (get-in state [:bci :matching?])
+         streaming? (get-in state [:bci :streaming?])]
+     
+     ; Stop streaming when we stop matching
+     (when (and (not matching?) streaming?)
+       (js/console.log "Stopping EEG streaming")
+       (let [stop-result (e/server (bci/stop-eeg-streaming-server))]
+         (js/console.log "Stream stop result:" (clj->js stop-result))
+         (swap! pong-state/state assoc-in [:bci :streaming?] false))))))
+
+(e/defn PollBrainActivityWhenMatching []
+  (e/client
+   (let [state (e/watch pong-state/state)
+         connected? (get-in state [:bci :device-connected?])
+         matching? (get-in state [:bci :matching?])
+         streaming? (get-in state [:bci :streaming?])]
+     ; Poll when connected, matching, and streaming
+     (when (and connected? matching? streaming?)
+       ; Should execute whenever the state changes
+       (let [confidence-data (e/server (bci/match-brain-activity-server))]
+         (js/console.log "Brain activity confidence:" (clj->js confidence-data))
+         (when confidence-data
+           (swap! pong-state/state assoc-in [:bci :confidence] confidence-data)))))))
+
 (e/defn BrainControls []
   (e/client
    (let [state (e/watch pong-state/state)
@@ -114,10 +155,16 @@
          pending-connect? (get-in state [:bci :pending-connect])
          pending-disconnect? (get-in state [:bci :pending-disconnect])
          active-profile (get-in state [:bci :active-profile])
-         connection-error (get-in state [:bci :connection-error])]
+         connection-error (get-in state [:bci :connection-error])
+         matching? (get-in state [:bci :matching?])
+         streaming? (get-in state [:bci :streaming?])
+         confidence (get-in state [:bci :confidence])]
 
      (ConnectWhenPending)
      (DisconnectWhenPending)
+     (StartStreamingWhenMatching)
+     (StopStreamingWhenNotMatching)
+     #_(PollBrainActivityWhenMatching)
 
      (dom/div
       (dom/props {:class "bci-controls"})
@@ -138,11 +185,36 @@
                    (swap! pong-state/state assoc-in [:bci :pending-connect] true)))
                nil))
 
+      ; Brain matching toggle (only show when connected)
+      (when connected?
+        (dom/button
+         (dom/props {:class (str "bci-button " (if matching? "stop-matching" "start-matching"))})
+         (dom/text (if matching? "Stop Brain Control" "Start Brain Control"))
+         (dom/On "click"
+                 (fn [_]
+                   (swap! pong-state/state assoc-in [:bci :matching?] (not matching?)))
+                 nil)))
+
       ; Show active profile info
       (when (and connected? active-profile)
         (dom/div
          (dom/props {:class "profile-info"})
-         (dom/text (str "Profile: " active-profile))))
+         (dom/text (str "Profile: " active-profile))
+         (when streaming?
+           (dom/span
+            (dom/props {:class "streaming-indicator"})
+            (dom/text " • Streaming")))))
+
+      ; Show brain activity confidence when matching
+      (when (and connected? matching? confidence)
+        (dom/div
+         (dom/props {:class "confidence-display"})
+         (dom/div (dom/text (str "Up: " (get confidence :up 0.0))))
+         (dom/div (dom/text (str "Down: " (get confidence :down 0.0))))
+         (when-let [error (get confidence :error)]
+           (dom/div
+            (dom/props {:class "confidence-error"})
+            (dom/text (str "Error: " error))))))
 
       ; Show connection error if any
       (when connection-error

@@ -3,7 +3,7 @@
             [brain-pong.game-state :as pong-state]
             [hyperfiddle.electric-dom3 :as dom]
             [mount.core :as mount]
-            [brain-pong.signature :as signature]
+            #?(:clj [brain-pong.signature :as signature])
             #?(:clj [floj.api :as api])
             #?(:clj [floj.state :as state])
             #?(:clj [floj.io :as fio])
@@ -43,18 +43,16 @@
          (println "Error in connect-device-server:" (.getMessage e))
          {:connected false :error (.getMessage e)}))))
 
-
 #?(:clj
-   (def disconnect-device-server
-     (fn []
-       (println "Server: Disconnecting from BCI device")
-       (try
-         (when-let [f (:release-board! @state/state)]
-           (f @state/shim))
-         {:connected true}
-         (catch Exception e
-           (println "Error disconnecting:" (.getMessage e))
-           {:connected false :error (.getMessage e)})))))
+   (defn disconnect-device-server []
+     (println "Server: Disconnecting from BCI device")
+     (try
+       (when-let [f (:release-board! @state/state)]
+         (f @state/shim))
+       {:connected true}
+       (catch Exception e
+         (println "Error disconnecting:" (.getMessage e))
+         {:connected false :error (.getMessage e)}))))
 
 #?(:clj
    (defn get-device-status-server []
@@ -83,7 +81,7 @@
    (defn stop-recording-server [category]
      (try
        (lexi/stop-wave-signature-recording! category "pong")
-        {:connected true}
+       {:connected true}
        (catch Exception e
          (println "Error stopping recording:" (.getMessage e))
          {:connected false :error (.getMessage e)}))))
@@ -91,11 +89,11 @@
 (e/defn start-recording! [category]
   (e/client
    (js/console.log "Client: Starting recording for category:" category)
-    (let [result (e/server (start-recording-server category))]
-      (when (:connected result)
-        (swap! pong-state/state assoc-in [:bci :recording?] true)
-        (swap! pong-state/state assoc-in [:bci :current-category] category))
-      result)))
+   (let [result (e/server (start-recording-server category))]
+     (when (:connected result)
+       (swap! pong-state/state assoc-in [:bci :recording?] true)
+       (swap! pong-state/state assoc-in [:bci :current-category] category))
+     result)))
 
 (e/defn stop-recording! [category]
   (e/client
@@ -106,13 +104,13 @@
      result)))
 
 #_#?(:cljs
-   (e/def update-threshold!
-     (e/server
-      #?(:clj
-         (fn [new-threshold]
-           (swap! device-state assoc :threshold new-threshold)
-           (swap! pong-state/state assoc-in [:bci :threshold] new-threshold)
-           new-threshold)))))
+     (e/def update-threshold!
+       (e/server
+        #?(:clj
+           (fn [new-threshold]
+             (swap! device-state assoc :threshold new-threshold)
+             (swap! pong-state/state assoc-in [:bci :threshold] new-threshold)
+             new-threshold)))))
 
 #?(:cljs
    (defn calculate-paddle-speed
@@ -127,95 +125,119 @@
              speed (* base-speed normalized-confidence)]
          speed))))
 
+#?(:clj
+   (defn match-brain-activity-impl []
+     (try
+       (let [recording? @state/recording?
+             eeg-data @state/eeg-data]
 
-(e/defn match-brain-activity-server
-  []
+         (println "Recording? value:" recording? "type:" (type recording?))
+         (println "EEG data value:" (if eeg-data "exists" "nil") "type:" (type eeg-data))
+
+         (if eeg-data
+           (println "EEG data count:" (count eeg-data))
+           (println "EEG data is nil"))
+
+         (println "=== CONDITION CHECKS ===")
+         (println "Check 1 - recording?:" recording?)
+         (println "Check 2 - eeg-data nil?:" (nil? eeg-data))
+         (println "Check 3 - eeg-data empty?:" (if eeg-data (empty? eeg-data) "data is nil"))
+
+         (cond
+           (not recording?)
+           (do
+             (println "EXIT CONDITION 1: EEG recording not started")
+             {:up 0.0 :down 0.0 :error "EEG recording not started"})
+
+           (nil? eeg-data)
+           (do
+             (println "EXIT CONDITION 2: EEG data not available")
+             {:up 0.0 :down 0.0 :error "EEG data stream not ready"})
+
+           (empty? eeg-data)
+           (do
+             (println "EXIT CONDITION 3: EEG data empty")
+             {:up 0.0 :down 0.0 :error "No EEG data collected yet"})
+
+           :else
+           (do
+             (println "=== PROCEEDING TO MAIN LOGIC ===")
+             (let [sampling-rate ((:sampling-rate @state/state))
+                   last-n-samples (min (count eeg-data) sampling-rate)
+                   recent-data (take-last last-n-samples eeg-data)
+                   current-features (signature/extract-signature-features recent-data sampling-rate)
+                   profile-name (or (:name ((:get-active-profile @state/state))) "default")
+                   up-dir (fio/get-wave-lexicon-dir profile-name "pong/up")
+                   up-signatures (signature/load-wave-signatures-from-dir up-dir)
+                   down-dir (fio/get-wave-lexicon-dir profile-name "pong/down")
+                   down-signatures (signature/load-wave-signatures-from-dir down-dir)]
+
+               (println "Profile name:" profile-name)
+               (println "Up signatures dir:" up-dir)
+               (println "Up signatures count:" (count up-signatures))
+               (println "Down signatures dir:" down-dir)
+               (println "Down signatures count:" (count down-signatures))
+               (println "Recent data samples:" (count recent-data))
+               (println "Current features extracted:" (not (nil? current-features)))
+
+               (if (and (seq up-signatures) (seq down-signatures))
+                 (let [up-scores (map #(signature/calculate-signature-similarity current-features %) up-signatures)
+                       down-scores (map #(signature/calculate-signature-similarity current-features %) down-signatures)
+                       best-up-score (if (seq up-scores) (apply max up-scores) 0.0)
+                       best-down-score (if (seq down-scores) (apply max down-scores) 0.0)]
+
+                   (println "Up scores:" up-scores)
+                   (println "Down scores:" down-scores)
+                   (println "Best up score:" best-up-score)
+                   (println "Best down score:" best-down-score)
+
+                   {:up best-up-score :down best-down-score})
+
+                 (do
+                   (println "No signatures found - need to train patterns first!")
+                   {:up 0.0 :down 0.0 :error "No trained patterns found"}))))))
+
+       (catch Exception e
+         (println "ERROR in match-brain-activity:" (.getMessage e))
+         (.printStackTrace e)
+         {:up 0.0 :down 0.0 :error (.getMessage e)}))))
+(e/defn match-brain-activity-server []
   (e/server
-   (fn []
-     #?(:clj
-        (try
-       ; First check if we have EEG recording active
-          (let [recording? @state/recording?
-                eeg-data @state/eeg-data]
-            (cond
-           ; Recording not started
-              (not recording?)
-              (do
-                (println "EEG recording not started - need to start Pong recording first")
-                {:up 0.0 :down 0.0 :error "EEG recording not started"})
+   (match-brain-activity-impl)))
 
-           ; No data or not started
-              (nil? eeg-data)
-              (do
-                (println "EEG data not available - recording started but no data stream yet")
-                {:up 0.0 :down 0.0 :error "EEG data stream not ready"})
+; Just added these separate attempts that use the back end state atom
+#?(:clj
+   (defn start-eeg-streaming-server []
+     (try
+       (println "Starting EEG streaming for category:")
 
-           ; Data available but empty
-              (empty? eeg-data)
-              (do
-                (println "EEG data stream started but no data collected yet")
-                {:up 0.0 :down 0.0 :error "No EEG data collected yet"})
-
-           ; We have data - proceed with matching
-              :else
-              (let [sampling-rate ((:sampling-rate @state/state))
-                    last-n-samples (min (count eeg-data) sampling-rate)
-                    recent-data (take-last last-n-samples eeg-data)
-                    current-features (signature/extract-signature-features recent-data sampling-rate)
-
-                    profile-name (or (:name ((:get-active-profile @state/state))) "default")
-
-                    up-dir (fio/get-wave-lexicon-dir profile-name "pong/up")
-                    up-signatures (signature/load-wave-signatures-from-dir up-dir)
-
-                    down-dir (fio/get-wave-lexicon-dir profile-name "pong/down")
-                    down-signatures (signature/load-wave-signatures-from-dir down-dir)
-
-                    up-scores (map #(signature/calculate-signature-similarity current-features %) up-signatures)
-                    down-scores (map #(signature/calculate-signature-similarity current-features %) down-signatures)
-
-                    best-up-score (if (seq up-scores) (apply max up-scores) 0.0)
-                    best-down-score (if (seq down-scores) (apply max down-scores) 0.0)
-
-                    golden-tensor (get-in ((:get-active-profile @state/state)) [:golden-tensor])
-
-                    [calibrated-up calibrated-down]
-                    (if golden-tensor
-                      (let [spectral-calibration (get-in golden-tensor [:spectral :frequency-domain])
-                            calibration-factors (try
-                                                  (-> (str (fio/get-wave-lexicon-dir profile-name "pong") "/category.edn")
-                                                      (fio/read-edn-file)
-                                                      (get-in [:summary :all :calibration-factors :average]))
-                                                  (catch Exception _ nil))
-                            calibrated-up (if (and spectral-calibration calibration-factors)
-                                            (* best-up-score
-                                               (/ (+ (:alpha calibration-factors)
-                                                     (:beta calibration-factors))
-                                                  2.0))
-                                            best-up-score)
-
-                            calibrated-down (if (and spectral-calibration calibration-factors)
-                                              (* best-down-score
-                                                 (/ (+ (:alpha calibration-factors)
-                                                       (:beta calibration-factors))
-                                                    2.0))
-                                              best-down-score)]
-
-                        [(max 0.0 (min 1.0 calibrated-up))
-                         (max 0.0 (min 1.0 calibrated-down))])
-
-                      [best-up-score best-down-score])
-
-                    confidence-data {:up calibrated-up
-                                     :down calibrated-down}]
-
-                (println "Confidence scores:" confidence-data)
-                confidence-data)))
-          (catch Exception e
-            (println "Error matching brain activity:" (.getMessage e))
-            {:up 0.0 :down 0.0 :error (.getMessage e)}))))))
+       (let [recording-started? (lexi/start-category-recording! "pong")]
+         (if recording-started?
+           (do
+             (reset! state/recording? true)
+             (println "EEG streaming started successfully")
+             {:success true})
+           (do
+             (println "Failed to start EEG streaming")
+             {:success false :error "Failed to start recording"})))
+       (catch Exception e
+         (println "Error starting EEG streaming:" (.getMessage e))
+         {:success false :error (.getMessage e)}))))
 
 #?(:clj
+   (defn stop-eeg-streaming-server []
+     (try
+       (println "Stopping EEG streaming")
+
+       (lexi/stop-category-recording! "pong")
+       (reset! state/recording? false)
+       (println "EEG streaming stopped")
+       {:success true}
+       (catch Exception e
+         (println "Error stopping EEG streaming:" (.getMessage e))
+         {:success false :error (.getMessage e)}))))
+
+#_#?(:clj
    (defn start-eeg-streaming-server [category]
      (try
        (println "Server: Starting EEG data streaming for Pong")
@@ -226,7 +248,7 @@
          (println "Error starting EEG streaming:" (.getMessage e))
          {:success false :streaming false :error (.getMessage e)}))))
 
-#?(:clj
+#_#?(:clj
    (defn stop-eeg-streaming-server [category]
      (try
        (println "Server: Stopping EEG data streaming")
@@ -252,21 +274,6 @@
          (println "Error checking EEG data status:" (.getMessage e))
          {:data-available false :recording false :error (.getMessage e)}))))
 
-(e/defn start-eeg-streaming! [category]
-  (e/client
-   (js/console.log "Client: Starting EEG streaming")
-   (let [result (e/server (start-eeg-streaming-server category))]
-     (when (:success result)
-       (swap! pong-state/state assoc-in [:bci :streaming?] true))
-     result)))
-
-(e/defn stop-eeg-streaming! [category]
-  (e/client
-   (js/console.log "Client: Stopping EEG streaming")
-   (let [result (e/server (stop-eeg-streaming-server category))]
-     (when (:success result)
-       (swap! pong-state/state assoc-in [:bci :streaming?] false))
-     result)))
 
 (e/defn check-eeg-data-status []
   (e/server (get-eeg-data-status-server)))
@@ -282,33 +289,6 @@
    (println "Client: Stopping brain activity matching")
    (swap! pong-state/state assoc-in [:bci :matching?] false)
    true))
-
-(e/defn PollBrainActivity [category]
-  (e/client
-   (let [_ (dom/on-animation-frame)
-         state (e/watch pong-state/state)
-         matching? (get-in state [:bci :matching?])
-         streaming? (get-in state [:bci :streaming?])
-         connected? (get-in state [:bci :device-connected?])]
-
-     (when (and connected? matching? (not streaming?))
-       (js/console.log "Starting EEG streaming for brain activity matching")
-       (let [stream-result (e/server (start-eeg-streaming-server category))]
-         (js/console.log "Stream start result:" (clj->js stream-result))
-         (when (:success stream-result)
-           (swap! pong-state/state assoc-in [:bci :streaming?] true))))
-
-     (when (and matching? streaming? connected?)
-
-       (let [confidence-data (match-brain-activity-server)]
-         (js/console.log "Raw confidence data received:" (clj->js confidence-data))
-         (when confidence-data
-           (if (:error confidence-data)
-             (js/console.log "BCI Error:" (:error confidence-data))
-             (do
-               (js/console.log "Processing confidence data:" (clj->js confidence-data))
-               (swap! pong-state/state assoc-in [:bci :confidence] confidence-data)
-               ))))))))
 
 #?(:cljs
    (defn process-bci-input! []
