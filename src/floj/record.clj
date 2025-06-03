@@ -49,7 +49,7 @@
   (try
     (println "Starting calibration process with" (count raw-data) "data points")
     (let [profile-name (:name profile)
-          
+
           recent-calibrations (calibrate/load-recent-calibrations profile-name 5)
           ; Extract dynamic target from profile
           profile-calibration (when profile
@@ -68,13 +68,13 @@
                                 std-format)))
 
           band-powers (calibrate/extract-band-powers normalized-data sampling-rate)
-          calibration-index(let [aggregate-dist (when (seq recent-calibrations)
-                                                  (calibrate/calculate-aggregate-distribution
-                                                   (map :calibration-index recent-calibrations)))
-                                 base-index (calibrate/create-calibration-index band-powers profile-calibration)]
-                             (if aggregate-dist
-                               (assoc base-index :band-distribution aggregate-dist)
-                               base-index))]
+          calibration-index (let [aggregate-dist (when (seq recent-calibrations)
+                                                   (calibrate/calculate-aggregate-distribution
+                                                    (map :calibration-index recent-calibrations)))
+                                  base-index (calibrate/create-calibration-index band-powers profile-calibration)]
+                              (if aggregate-dist
+                                (assoc base-index :band-distribution aggregate-dist)
+                                base-index))]
       (println "Created calibration index with factors:" (:calibration-factors calibration-index))
       (calibrate/save-calibration-to-history! profile-name calibration-index)
       ; Check if we should update the profile's golden tensor
@@ -105,10 +105,13 @@
                                    profile)]
 
         (when new-calibration-index
-          (lor/update-metadata-calibration!
-           (:lorfile-dir @state/recording-context)
-           (:metadata @state/recording-context)
-           new-calibration-index))))))
+          ;; FIX: Use the stored recording context instead of creating new timestamp
+          (let [recording-ctx @state/recording-context]
+            (when recording-ctx
+              (lor/update-metadata-calibration!
+               (:lorfile-dir recording-ctx)
+               (:metadata recording-ctx)
+               new-calibration-index))))))))
 
 (defn record-loop!
   [interval-ms]

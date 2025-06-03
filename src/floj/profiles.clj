@@ -154,22 +154,57 @@
           (println "Switched to profile:" profile-name))
         (println "Profile not found.")))))
 
+(defn consolidate-profile-history!
+  "Consolidate multiple profile files into one, keeping the most recent data"
+  [profile-name consolidated-profile]
+  (try
+    (let [history-dir (get-profile-history-dir profile-name)
+          history-files (when (.exists (io/file history-dir))
+                          (->> (.listFiles (io/file history-dir))
+                               (filter #(.isFile %))
+                               (filter #(.endsWith (.getName %) ".edn"))
+                               (sort-by #(.lastModified %))))]
+
+      (when (> (count history-files) 1)
+        (println "Consolidating" (count history-files) "profile files")
+
+        ; Keep only the most recent file, delete the others
+        (doseq [file (butlast history-files)]
+          (try
+            (.delete file)
+            (println "Deleted old profile file:" (.getName file))
+            (catch Exception e
+              (println "Error deleting file" (.getName file) ":" (.getMessage e)))))
+
+        (println "Consolidated profile history, kept most recent file")))
+    (catch Exception e
+      (println "Error consolidating profile history:" (.getMessage e))
+      (.printStackTrace e))))
+
+
 (defn save-profile!
   "Save a user profile to history - create new file only when necessary"
   [profile]
   (try
     (let [profile-name (:name profile)
           current-time (System/currentTimeMillis)
-          calibration-files-count (count (get-in profile [:calibration-history :files] []))
+          calibration-count (get-in profile [:calibration-history :count] 0)
           latest-path (get-latest-profile-path profile-name)
 
-          ; Create a new file if:
+          ; Create a new profile file if:
           ; 1. No profile file exists yet OR
-          ; 2. Use reaches MAX_CALIBRATION_FILES in the calibration history
-          ; This triggers a "rotation" of the profile history
+          ; 2. We've reached the rotation interval (every 10 recordings) OR  
+          ; 3. We need to consolidate (every 100 calibrations total)
+          should-rotate? (and (pos? calibration-count)
+                              (zero? (mod calibration-count calibrate/PROFILE_ROTATION_INTERVAL)))
+
+          should-consolidate? (and (pos? calibration-count)
+                                   (zero? (mod calibration-count calibrate/MAX_CALIBRATION_FILES)))
+
           create-new-file? (or (nil? latest-path)
                                (not (.exists (io/file (or latest-path ""))))
-                               (>= calibration-files-count calibrate/MAX_CALIBRATION_FILES))
+                               should-rotate?
+                               should-consolidate?)
 
           ; Use existing path or create new timestamp-based path
           save-path (if create-new-file?
@@ -181,13 +216,26 @@
                                  :version 1.0)]
 
       (fio/ensure-profile-directories! profile-name)
+
+      (when should-consolidate?
+        (println "Consolidating profile history after" calibration-count "recordings")
+        (consolidate-profile-history! profile-name updated-profile))
+
       (spit save-path (pr-str updated-profile))
-      (if create-new-file?
-        (println "Created new profile history snapshot at:" save-path
-                 (when (>= calibration-files-count calibrate/MAX_CALIBRATION_FILES)
-                   (str " (reached " calibration-files-count " files)")))
-        (println "Updated existing profile history snapshot at:" save-path
-                 " (calibration files:" calibration-files-count ")"))
+      (cond
+        should-consolidate?
+        (println "Consolidated and created new profile snapshot at:" save-path)
+
+        should-rotate?
+        (println "Created new profile rotation at:" save-path
+                 "(after" calibration-count "recordings)")
+
+        create-new-file?
+        (println "Created new profile history snapshot at:" save-path)
+
+        :else
+        (println "Updated existing profile at:" save-path
+                 "(calibration count:" calibration-count ")"))
       true)
     (catch Exception e
       (println "Error saving profile:" (.getMessage e))

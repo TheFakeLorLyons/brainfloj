@@ -7,7 +7,8 @@
 
 (def ^:dynamic *debug-calibration* false)
 (def ^:const GOLDEN_TENSOR_BATCH_SIZE 10)
-(def ^:const MAX_CALIBRATION_FILES 100)  
+(def ^:const PROFILE_ROTATION_INTERVAL 10)
+(def ^:const MAX_CALIBRATION_FILES 100)
 
 (defn get-calibration-file-path
   "Get the path to a calibration file from a timestamp"
@@ -62,27 +63,21 @@
             timestamp (System/currentTimeMillis)
             ; Get the current recording directory from state
             recording-dir (get-in @state/recording-context [:lorfile-dir])
-
             ; Extract timestamp from recording directory path and validate it
             dir-timestamp (when recording-dir
                             (let [extracted (fio/extract-timestamp-from-recording-dir recording-dir)]
                               (when (and extracted (number? extracted) (> extracted 0))
                                 extracted)))
-
             ; Use the extracted timestamp or current timestamp as fallback
             file-timestamp (or dir-timestamp timestamp)
-
             ; Get existing files vector or empty vector if it doesn't exist
             existing-files (get-in profile [:calibration-history :files] [])
-
             ; Check if this timestamp already exists in the files list to avoid duplicates
             timestamp-exists? (some #(= % file-timestamp) existing-files)
-
             ; Only update files if this is a new timestamp
             updated-files (if (and (not timestamp-exists?) (vector? existing-files))
                             (conj existing-files (long file-timestamp))
                             existing-files)
-
             ; Ensure it's properly sorted (oldest to newest)
             sorted-files (vec (sort updated-files))
             file-count (count sorted-files)
@@ -100,10 +95,12 @@
           (println "Timestamp already exists:" timestamp-exists?)
           (println "Previous files count:" (count existing-files))
           (println "Updated files count:" (count sorted-files))
-          (println "Will create new profile?" (>= (count sorted-files) MAX_CALIBRATION_FILES))
+          (println "Calibration count:" file-count)
+          (println "Should rotate profile?" (zero? (mod file-count PROFILE_ROTATION_INTERVAL)))
+          (println "Should consolidate?" (zero? (mod file-count MAX_CALIBRATION_FILES)))
           (println "========================================\n"))
 
-        ; Save updated profile - will create new file when reaching MAX_CALIBRATION_FILES
+        ; Save updated profile - will create new file based on rotation/consolidation logic
         ((:save-profile! @state/state) updated-profile)
         true))
     (catch Exception e
@@ -432,11 +429,11 @@
       (let [calibration-factors (:calibration-factors calibration-index)
             ; Only process if we have valid calibration factors
             valid-calibration? (and (map? calibration-factors)
-                                   (some (fn [[_ v]] (not= v 1.0)) calibration-factors))]
-        
+                                    (some (fn [[_ v]] (not= v 1.0)) calibration-factors))]
+
         (if-not valid-calibration?
           eeg-data  ; Return unchanged if no valid calibration
-          
+
           ; Process each channel separately
           (mapv
            (fn [channel-data]
@@ -511,11 +508,11 @@
 
                      ; Step 6: Convert back to time domain using inverse FFT
                      calibrated-time-data (filter/perform-ifft combined-fft (count channel-data))]
-                 
+
                  ; Return the calibrated time-domain data
                  (vec calibrated-time-data))))
            eeg-data)))
-      
+
       (catch Exception e
         (println "Error in calibration:" (.getMessage e))
         (.printStackTrace e)))
@@ -529,9 +526,9 @@
           quality-scores (for [channel-data eeg-data]
                            (let [; Calculate signal variance
                                  variance (let [mean (/ (reduce + channel-data) (count channel-data))
-                                               squared-diffs (map #(Math/pow (- % mean) 2) channel-data)]
-                                           (/ (reduce + squared-diffs) (count channel-data)))
-                                 
+                                                squared-diffs (map #(Math/pow (- % mean) 2) channel-data)]
+                                            (/ (reduce + squared-diffs) (count channel-data)))
+
                                  ; Calculate signal-to-noise ratio estimate
                                  ; Using power in alpha/beta bands vs high frequency noise
                                  fft-data (filter/perform-fft (vec channel-data))
@@ -542,19 +539,19 @@
                                  snr (if (pos? high-freq-power)
                                        (/ signal-power high-freq-power)
                                        0.0)
-                                 
+
                                  ; Check for flatlines or excessive amplitudes
                                  max-val (apply max channel-data)
                                  min-val (apply min channel-data)
                                  range-ok? (and (< (Math/abs max-val) 500)
-                                               (> (- max-val min-val) 1.0))
-                                 
+                                                (> (- max-val min-val) 1.0))
+
                                  ; Calculate final quality score (0-1)
-                                 quality-score (* 0.5 
-                                                 (+ (min 1.0 (/ variance 100.0))
-                                                    (min 1.0 (* 0.2 snr))))]
+                                 quality-score (* 0.5
+                                                  (+ (min 1.0 (/ variance 100.0))
+                                                     (min 1.0 (* 0.2 snr))))]
                              (if range-ok? quality-score 0.0)))
-          
+
           ; Overall quality is minimum across channels
           overall-quality (if (seq quality-scores)
                             (apply min quality-scores)
