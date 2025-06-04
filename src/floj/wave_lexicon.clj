@@ -337,7 +337,7 @@
                                           (name category) "/" (name signature-name))})
 
       ; Reset EEG data collection
-      (reset! state/eeg-data [])
+      #_(reset! state/eeg-data [])
 
       ; Start the actual recording
       (record/start-recording! recording-info)
@@ -389,10 +389,8 @@
       (throw (Exception. "Category and signature name must be provided")))
 
     (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
-          _ (println "profile " profile-name)
           context (create-category-context profile-name category)
           category-recording-dir (:lorfile-dir context)
-          _ (println "fixing the PATH!!! " category-recording-dir)
           category-recording-info {:recording-type category
                                    :path category-recording-dir}]
 
@@ -401,14 +399,14 @@
 
       ; Store context for recording
       (reset! state/recording-context context)
-      (println "state: " @state/recording-context)
+
       ; Add tag for wave signature start
       (swap! state/tags conj {:timestamp (:start-time (:metadata context))
                               :label (str (str/upper-case category) "_START:"
                                           (name category))})
 
       ; Reset EEG data collection
-      (reset! state/eeg-data [])
+      #_(reset! state/eeg-data [])
 
       ; Start the actual recording
       (record/start-recording! category-recording-info)
