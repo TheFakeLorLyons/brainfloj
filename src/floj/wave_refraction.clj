@@ -27,9 +27,9 @@
                               :refraction-mirrors {}}))
 
 (def calibration-script
-  [{:label :rest    :duration-ms 30000 :instruction "Please relax... recording resting state."}
-   {:label :active  :duration-ms 30000 :instruction "Please move your eyes up and down (no head movement)."}
-   {:label :imagery :duration-ms 30000 :instruction "Now, imagine the same movement (up/down) without doing it."}])
+  [{:label :rest    :duration-ms 3000 :instruction "Please relax... recording resting state."}
+   {:label :active  :duration-ms 3000 :instruction "Please move your eyes up and down (no head movement)."}
+   {:label :imagery :duration-ms 3000 :instruction "Now, imagine the same movement (up/down) without doing it."}])
 
 (defn read-lor-file
   "Read a .lor file and return the data along with header info"

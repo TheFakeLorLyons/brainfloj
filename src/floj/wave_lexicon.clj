@@ -337,7 +337,7 @@
                                           (name category) "/" (name signature-name))})
 
       ; Reset EEG data collection
-      #_(reset! state/eeg-data [])
+      (reset! state/eeg-data [])
 
       ; Start the actual recording
       (record/start-recording! recording-info)
@@ -406,7 +406,7 @@
                                           (name category))})
 
       ; Reset EEG data collection
-      #_(reset! state/eeg-data [])
+      (reset! state/eeg-data [])
 
       ; Start the actual recording
       (record/start-recording! category-recording-info)
