@@ -457,7 +457,7 @@
                         (and (vector? eeg-data) (every? vector? eeg-data)) :vector-of-vectors
                         :else :unknown)
           ;; Convert to proper format [channels][samples]
-          _ (println "eeg-data " eeg-data)
+          #_ (println "eeg-data " eeg-data)
           normalized-data (case data-format
                             :map-format
                             (let [channel-keys (remove #{:timestamp} (keys (first eeg-data)))]
