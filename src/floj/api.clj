@@ -16,24 +16,6 @@
   []
   (brainflow/get-channel-data :eeg @state/shim))
 
-(defn compare-and-select-profile-name []
-  (let [active-profile-name ((:get-active-profile @state/state))]
-    (if (= active-profile-name "default")
-      active-profile-name
-      (do
-        (println "You don't have a custom profile configured.")
-        (loop []
-          (print "Please enter a unique profile name: ")
-          (flush)
-          (let [input (read-line)]
-            (if (str/blank? input)
-              (do
-                (println "Profile name cannot be blank.")
-                (recur))
-              (do
-                (profiles/create-profile! input true)
-                input))))))))
-
 (defn get-board-info
   "Get detailed information about the currently connected board"
   []
@@ -182,10 +164,9 @@
 
 (defn configure-bci-device!
   "Interactive prompt to configure BCI device settings"
-  []
+  [profile-name]
   (println "\n--- BCI Device Configuration ---")
   (flush)
-  (let [profile-name (compare-and-select-profile-name)]
     (print-board-type-options)
     (print "Enter the number associated with your board in the list: ")
     (flush)
@@ -210,7 +191,7 @@
           (flush)
           (let [connect? (read-line)]
             (when connect?
-              (connect! mac-address com-port :board-id board-id))))))))
+              (connect! mac-address com-port :board-id board-id)))))))
 
 (defn profile-has-bci-device?
   "Check if the profile has configured BCI device settings"

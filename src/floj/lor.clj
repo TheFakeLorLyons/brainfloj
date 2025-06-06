@@ -34,9 +34,6 @@
   "Updates the metadata file with a new calibration index"
   [lorfile-dir metadata calibration-index]
   (try
-    (println "Attempting to update metadata file in directory:" lorfile-dir)
-    (println "Current metadata keys:" (keys metadata))
-    (println "New calibration index:" calibration-index)
     (let [updated-metadata (assoc metadata :calibration-index calibration-index)
           path (str lorfile-dir "/recording_metadata.edn")]
       (with-open [w (io/writer path)]
@@ -52,13 +49,16 @@
       nil)))
 
 (defn write-metadata!
-  "Creates recording directory and initial metadata file with calibration index"
+  "Creates recording directory and initial metadata file with calibration index - FIXED to preserve full golden-tensor"
   ([session-name board-id]
    (write-metadata! session-name board-id nil))
   ([base-name board-id custom-config]
    (try
      (let [sampling-rate (brainflow/get-sampling-rate board-id)
            eeg-channels (brainflow/get-channel-data :eeg board-id)
+           profile (profiles/get-active-profile)
+           profile-name (:name profile)
+           refreshed-profile (profiles/load-profile profile-name)
 
            _ (when-not (and sampling-rate eeg-channels)
                (throw (Exception. "Required state functions not available")))
@@ -66,7 +66,7 @@
            lorfile-dir (if custom-config
                          (let [path (:path custom-config)
                                recording-type (:recording-type custom-config)]
-                          (fio/create-recording-directory! path recording-type))
+                           (fio/create-recording-directory! path recording-type))
                          (fio/create-recording-directory! base-name))
 
            metadata {:recording-id (str base-name "_" (System/currentTimeMillis))
@@ -80,15 +80,14 @@
 
            _ (swap! state/recording-context assoc :lorfile-dir lorfile-dir)
 
-           current-profile-name (or (:name (profiles/get-active-profile)) "default")
-           _ (println "Using profile:" current-profile-name)
+           full-golden-tensor (get refreshed-profile :golden-tensor)
 
            profile-calibration (try
                                  (when (and (resolve 'refract/load-calibration-profile)
                                             (fn? (resolve 'refract/check-calibration))
-                                            ((resolve 'refract/check-calibration) current-profile-name))
+                                            ((resolve 'refract/check-calibration) profile-name))
                                    (println "Profile calibration found, loading...")
-                                   ((resolve 'refract/load-calibration-profile) current-profile-name))
+                                   ((resolve 'refract/load-calibration-profile) profile-name))
                                  (catch Exception e
                                    (println "Error loading calibration profile:" (.getMessage e))
                                    nil))
@@ -97,19 +96,23 @@
                                        (let [band-distribution (or
                                                                 (get-in profile-calibration
                                                                         [:golden-tensor :spectral :frequency-domain])
+                                                                (get-in full-golden-tensor
+                                                                        [:spectral :frequency-domain])
                                                                 {:alpha 0.022 :beta 0.774 :gamma 0.201})]
-                                         {:band-distribution band-distribution
-                                          :target-distribution band-distribution
-                                          :calibration-factors {:alpha 1.0 :beta 1.0 :gamma 1.0}
-                                          :focus-zone {:center 17.5
-                                                       :width 5.0
-                                                       :bounds [10.0 25.0]
-                                                       :sensitivity-curve-params {:center 17.5 :sigma 2.83}}
-                                          :timestamp (System/currentTimeMillis)}))
+                                         (cond-> {:band-distribution band-distribution
+                                                  :target-distribution band-distribution
+                                                  :calibration-factors {:alpha 1.0 :beta 1.0 :gamma 1.0}
+                                                  :focus-zone {:center 17.5
+                                                               :width 5.0
+                                                               :bounds [10.0 25.0]
+                                                               :sensitivity-curve-params {:center 17.5 :sigma 2.83}}
+                                                  :timestamp (System/currentTimeMillis)}
+                                           ; Full golden-tensor from the profile, not the calibration profile
+                                           full-golden-tensor (assoc :golden-tensor full-golden-tensor))))
 
            complete-metadata (cond-> metadata
                                default-local-calibration (assoc :calibration-index default-local-calibration)
-                               profile-calibration (assoc :calibration-profile-name current-profile-name))
+                               profile-calibration (assoc :calibration-profile-name profile-name))
 
            metadata-path (str lorfile-dir "/recording_metadata.edn")]
 

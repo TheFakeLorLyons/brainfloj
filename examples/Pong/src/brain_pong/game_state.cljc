@@ -291,7 +291,7 @@
       (swap! state update-in [:game :ball :speed-x] #(- (Math/abs %)))
       (swap! state update-in [:game :ball :speed-x] #(- % 0.5)))))
 
-#_(defn game-loop-tick! []
+(defn game-loop-tick! []
   (when (get-in @state [:game :playing?])
     (update-ball!)
     (move-ai-paddle!)
@@ -304,12 +304,6 @@
       (cond
         (> up-confidence threshold) (move-paddle! :up)
         (> down-confidence threshold) (move-paddle! :down)))))
-
-(defn game-loop-tick! []
-  (when (get-in @state [:game :playing?])
-    #?(:cljs (js/console.log "Game tick"))
-    (update-ball!)
-    (move-ai-paddle!)))
 
 #?(:cljs
    (defn handle-key-down [e]
@@ -408,17 +402,17 @@
 #?(:cljs
    (defn init-keyboard-controls! []
      (js/console.log "Initializing keyboard controls")
-     ;; Remove existing listeners first to prevent duplicates
+     ; Remove existing listeners first to prevent duplicates
      (js/window.removeEventListener "keydown" handle-key-down)
      (js/window.removeEventListener "keyup" handle-key-up)
-     ;; Add listeners
+     ; Add listeners
      (js/window.addEventListener "keydown" handle-key-down)
      (js/window.addEventListener "keyup" handle-key-up))
    :clj
    (defn init-keyboard-controls! []
      (println "Initializing keyboard controls - server-side implementation")))
 
-;; Clean up
+; Clean up
 #?(:cljs
    (defn cleanup-keyboard-controls! []
      (js/window.removeEventListener "keydown" handle-key-down)
@@ -427,7 +421,7 @@
    (defn cleanup-keyboard-controls! []
      (println "Cleaning up keyboard controls - server-side implementation")))
 
-;; Initialize game
+; Initialize game
 #?(:cljs
    (defn init-game! []
      (js/console.log "Initializing game state")

@@ -54,6 +54,8 @@
           ; Extract dynamic target from profile
           profile-calibration (when profile
                                 {:golden-tensor (get profile :golden-tensor)})
+
+          ; Determine the data format and normalize
           data-format (if (and (seq raw-data) (map? (first raw-data)))
                         :map-format
                         :unknown)
@@ -63,26 +65,57 @@
                                      (mapv #(get % k 0.0) raw-data))))
                             (let [std-format (stream/normalize-data-format raw-data)]
                               (if (and (map? std-format) (:eeg std-format))
-                                ; Make sure it's in [channels][samples] format
+                                ; Ensure data is in [channels][samples] format
                                 (stream/transpose-data (:eeg std-format))
                                 std-format)))
 
+          ; Extract band powers
           band-powers (calibrate/extract-band-powers normalized-data sampling-rate)
+
+          ; Calculate total power for band distribution
+          total-power (reduce + (vals band-powers))
+
+          ; Calculate band distribution (normalized power ratios)
+          band-distribution (when (> total-power 0)
+                              (into {} (for [[band power] band-powers]
+                                         [band (/ power total-power)])))
+
+          ; Calculate calibration factors
+          golden-tensor (get profile :golden-tensor)
+          target-frequency-domain (get-in golden-tensor [:spectral :frequency-domain])
+
+          calibration-factors (when (and band-powers target-frequency-domain)
+                                (into {} (for [[band current-power] band-powers]
+                                           (let [target-power (get target-frequency-domain band 1.0)]
+                                             [band (if (> current-power 0)
+                                                     (/ target-power current-power)
+                                                     0.1)]))))
+
+          ; Build the calibration index
           calibration-index (let [aggregate-dist (when (seq recent-calibrations)
                                                    (calibrate/calculate-aggregate-distribution
                                                     (map :calibration-index recent-calibrations)))
                                   base-index (calibrate/create-calibration-index band-powers profile-calibration)]
                               (if aggregate-dist
-                                (assoc base-index :band-distribution aggregate-dist)
-                                base-index))]
-      (println "Created calibration index with factors:" (:calibration-factors calibration-index))
+                                (assoc base-index :band-distribution aggregate-dist
+                                       :calibration-factors calibration-factors)
+                                (assoc base-index :band-distribution band-distribution
+                                       :calibration-factors calibration-factors)))]
+
+      #_(println "Created calibration index with factors:" (:calibration-factors calibration-index))
+
+      ; Save the calibration to history
       (calibrate/save-calibration-to-history! profile-name calibration-index)
+
       ; Check if we should update the profile's golden tensor
       (let [recording-counter ((:update-recording-counter! @state/state))]
         (when (calibrate/should-update-profile? recording-counter)
           (println "Updating profile golden tensor after" recording-counter "recordings")
           ((:update-golden-tensor @state/state))))
+
+      ; Return the calibration index with band powers, distribution, and factors
       calibration-index)
+
     (catch Exception e
       (println "Error in calibration process:" (.getMessage e))
       (.printStackTrace e)
@@ -105,7 +138,7 @@
                                    profile)]
 
         (when new-calibration-index
-          ;; FIX: Use the stored recording context instead of creating new timestamp
+          ; Use the stored recording context instead of creating new timestamp
           (let [recording-ctx @state/recording-context]
             (when recording-ctx
               (lor/update-metadata-calibration!
@@ -216,7 +249,7 @@
                  tags (or @state/tags [])
                  write-lor-fn (:write-lor! @state/state)]
              (write-lor-fn eeg-data tags board-id))))))
-   (reset! state/recording-context nil))) ; Clear recording contextb
+   (reset! state/recording-context nil))) ; Clear recording context
 
 (defn execute-command
   "Execute a command by its key"

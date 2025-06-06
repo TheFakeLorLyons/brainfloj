@@ -68,10 +68,10 @@
     (if (or existing-active-profile existing-history-files)
       nil
       (do
-        ;; Ensure directories exist
+        ; Ensure directories exist
         (fio/ensure-profile-directories! profile-name)
 
-        ;; Create the profile in history location only
+        ; Create the profile in history
         (let [history-path (get-profile-history-path profile-name timestamp)
               default-profile {:name profile-name
                                :created-at (java.util.Date.)
@@ -88,15 +88,57 @@
                                :calibration-history {:count 0
                                                      :last-update timestamp
                                                      :files []}}]
-          ;; Write only to history path
+          ; Write to history path
           (spit history-path (pr-str default-profile))
           (println "Created default profile at:" history-path)
           history-path)))))
 
+(defn load-profile
+  "Load a user profile by name"
+  [profile-name]
+  (try
+    (let [profile-path (get-current-profile-path profile-name)]
+      (if (and profile-path (.exists (io/file profile-path)))
+        ; Profile exists, load it
+        (edn/read-string (slurp profile-path))
+        ; Profile doesn't exist, create it
+        (do
+          (println "Profile does not exist, creating:" profile-name)
+          (fio/ensure-profile-directories! profile-name)
+          (let [timestamp (System/currentTimeMillis)
+                new-profile {:name profile-name
+                             :created-at (java.util.Date.)
+                             :updated-at (java.util.Date.)
+                             :version 1
+                             :keybindings {:start "s" :stop "e"}
+                             :bci-device {:configured false
+                                          :board-type "GANGLION_BOARD"
+                                          :mac-address ""
+                                          :com-port ""
+                                          :connection-method "bled112"}
+                             :golden-tensor {:spectral {:frequency-domain
+                                                        {:delta 0.2 :theta 0.15 :alpha 0.25 :beta 0.3 :gamma 0.1}}}
+                             :calibration-history {:count 0
+                                                   :last-update timestamp
+                                                   :files []}}
+                history-path (get-profile-history-path profile-name timestamp)]
+            (spit history-path (pr-str new-profile))
+            new-profile))))
+    (catch Exception e
+      (println "Error loading profile" profile-name ":" (.getMessage e))
+      nil)))
+
 (defn set-active-profile!
   "Updates the in-memory state to reflect the current active profile"
   [profile-name]
-  (swap! state/state assoc :get-active-profile (constantly profile-name)))
+  (try
+    (let [profile-data (load-profile profile-name)]
+      (swap! state/state assoc :get-active-profile 
+             (constantly profile-data)))
+    (catch Exception e
+      (println "Error loading profile data, using minimal profile:" (.getMessage e))
+      (swap! state/state assoc :get-active-profile 
+             (constantly {:name profile-name})))))
 
 (defn set-default-profile!
   "Sets the active-profile key in config"
@@ -140,7 +182,8 @@
       (flush)
       (let [device-response (read-line)]
         (when (= (clojure.string/lower-case (subs device-response 0 1)) "y")
-          ((:register-device @state/state)))))
+          ((:register-device @state/state) profile-name))))
+    ((:fill-initial-lexicon! @state/state) profile-name)
     new-profile))
 
 (defn switch-profile! []
@@ -241,42 +284,6 @@
       (println "Error saving profile:" (.getMessage e))
       (.printStackTrace e)
       false)))
-
-(defn load-profile
-  "Load a user profile by name"
-  [profile-name]
-  (try
-    (let [profile-path (get-current-profile-path profile-name)]
-      (if (and profile-path (.exists (io/file profile-path)))
-        ; Profile exists, load it
-        (edn/read-string (slurp profile-path))
-        ; Profile doesn't exist, create it
-        (do
-          (println "Profile does not exist, creating:" profile-name)
-          (fio/ensure-profile-directories! profile-name)
-          (let [timestamp (System/currentTimeMillis)
-                new-profile {:name profile-name
-                             :created-at (java.util.Date.)
-                             :updated-at (java.util.Date.)
-                             :version 1
-                             :keybindings {:start "s" :stop "e"}
-                             :bci-device {:configured false
-                                          :board-type "GANGLION_BOARD"
-                                          :mac-address ""
-                                          :com-port ""
-                                          :connection-method "bled112"}
-                             :golden-tensor {:spectral {:frequency-domain
-                                                        {:delta 0.2 :theta 0.15 :alpha 0.25 :beta 0.3 :gamma 0.1}}}
-                             :calibration-history {:count 0
-                                                   :last-update timestamp
-                                                   :files []}}
-                history-path (get-profile-history-path profile-name timestamp)]
-            (spit history-path (pr-str new-profile))
-            new-profile))))
-    (catch Exception e
-      (println "Error loading profile" profile-name ":" (.getMessage e))
-      nil)))
-
 
 (defn delete-profile! []
   (let [profiles (list-profiles)]

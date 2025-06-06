@@ -22,31 +22,21 @@
        (js/cancelAnimationFrame @frame-id-atom)
        (reset! frame-id-atom nil))
 
-     (when (and playing? connected? (not matching?))
-       (js/console.log "Starting BCI brain activity matching")
-       (swap! pong-state/state assoc-in [:bci :matching?] true))
-
-     ;; Stop BCI control when game stops or device disconnected
-     (when (and matching? (or (not playing?) (not connected?)))
-       (js/console.log "Stopping BCI brain activity matching")
-       (swap! pong-state/state assoc-in [:bci :matching?] false))
-
      (when playing?
-       
        (js/console.log "Starting new game loop")
        (letfn [(game-loop []
-                          (let [keys-pressed (get @pong-state/state :keys-pressed #{})]
-                            (when (contains? keys-pressed "ArrowUp")
-                              (pong-state/move-paddle! :up))
-                            (when (contains? keys-pressed "ArrowDown")
-                              (pong-state/move-paddle! :down)))
+                 (let [keys-pressed (get @pong-state/state :keys-pressed #{})]
+                   (when (contains? keys-pressed "ArrowUp")
+                     (pong-state/move-paddle! :up))
+                   (when (contains? keys-pressed "ArrowDown")
+                     (pong-state/move-paddle! :down)))
 
-                          (if (and connected? matching?)
-                            (bci/process-bci-input!)
-                            (pong-state/game-loop-tick!))
+                 (if (and connected? matching?)
+                   (bci/process-bci-input)
+                   (pong-state/brain-game-loop-tick!))
 
-                          (when (get-in @pong-state/state [:game :playing?])
-                            (reset! frame-id-atom (js/requestAnimationFrame game-loop))))]
+                 (when (get-in @pong-state/state [:game :playing?])
+                   (reset! frame-id-atom (js/requestAnimationFrame game-loop))))]
 
          (reset! frame-id-atom (js/requestAnimationFrame game-loop))))
 
@@ -54,11 +44,7 @@
       #(do
          (when @frame-id-atom
            (js/cancelAnimationFrame @frame-id-atom)
-           (reset! frame-id-atom nil))
-
-         (when matching?
-           #_(bci/stop-activity-matching!)
-           #_(bci/stop-eeg-streaming!))))
+           (reset! frame-id-atom nil))))
 
      nil)))
 
@@ -146,14 +132,14 @@
         (component/Instructions)
         (component/PongCourt)
         (GameLoop)
-      
+
         (dom/div
          (dom/props {:class "bci-area"})
          (component/BCIPanel)
 
          (PeriodicStatusChecker)))
        #_(component/StateDebugging)
-     
+
        (component/DebugPanel))))))
 
 (defn electric-boot [ring-request]

@@ -47,7 +47,7 @@
 
 (defn cli-program [board-shim]
   (let [active-profile ((:get-active-profile @state/state))]
-    (lexi/fill-initial-lexicon!)
+    (lexi/fill-initial-lexicon! (:name active-profile))
     (println "You are logged in as:" (:name active-profile))
     (kb/load-profile-keymap!)
 

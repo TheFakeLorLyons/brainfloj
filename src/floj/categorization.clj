@@ -3,7 +3,8 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.pprint :as pp]
-            [floj.io :as fio]))
+            [floj.io :as fio]
+            [zprint.core :as zp]))
 
 (defn find-signature-recording-dirs
   "Find all recording directories for a specific signature type"
@@ -64,30 +65,88 @@
        :signature-count 0
        :has-template false
        :last-updated nil})))
-
 (defn extract-metadata
-  "Extract metadata from a signature directory"
-  [signature-dir]
+  "Extract metadata ensuring REAL extracted features are used"
+  [recording-dir]
   (try
-    (let [metadata-file (io/file signature-dir "recording_metadata.edn")]
-      (when (.exists metadata-file)
-        (let [metadata (edn/read-string (slurp metadata-file))]
-          (assoc metadata
-                 :directory (.getPath signature-dir)
-                 :timestamp (.lastModified signature-dir)))))
-    (catch Exception e
-      (println "Error extracting metadata from" (.getPath signature-dir) ":" (.getMessage e))
-      nil)))
+    (let [metadata-file (str recording-dir "/recording_metadata.edn")
+          signature-file (str recording-dir "/signature_features.edn")]
+      (when (.exists (clojure.java.io/file metadata-file))
+        (let [metadata (edn/read-string (slurp metadata-file))
 
+              signature-features (when (.exists (clojure.java.io/file signature-file))
+                                   (try
+                                     (edn/read-string (slurp signature-file))
+                                     (catch Exception e
+                                       (println "Error reading signature features:" (.getMessage e))
+                                       nil)))]
+
+          ; Extract raw band powers - prioritize calibration data for aggregation
+          (let [real-band-powers (or
+                                  ; First priority: calibration band powers (what frontend expects)
+                                  (get-in metadata [:calibration-index :band-powers])
+                                  ; Second priority: from signature_features.edn calibration context
+                                  (get-in signature-features [:calibration-context :band-powers])
+                                  ; Third priority: from signature_features.edn signature features
+                                  (get-in signature-features [:signature-features :band-powers])
+                                  ; Fourth priority: from metadata extracted powers
+                                  (when-let [meta-powers (:extracted-band-powers metadata)]
+                                    (when (not= meta-powers {:delta 0.2, :theta 0.15, :alpha 0.25, :beta 0.3, :gamma 0.1})
+                                      meta-powers)))
+
+                ; Extract band distribution - try multiple sources
+                band-distribution (or
+                                   ; First try calibration index
+                                   (get-in metadata [:calibration-index :band-distribution])
+                                   ; Then try signature features calibration context
+                                   (get-in signature-features [:calibration-context :band-distribution])
+                                   ; Then try to calculate from band powers if we have them
+                                   (when real-band-powers
+                                     (let [total-power (reduce + (vals real-band-powers))]
+                                       (when (> total-power 0)
+                                         (into {} (for [[band power] real-band-powers]
+                                                    [band (/ power total-power)]))))))]
+
+            (when-not real-band-powers
+              (println "WARNING: No real band powers found for" recording-dir))
+
+            ; Build the complete metadata with calibration data
+            (cond-> metadata
+              ; Use calibration band powers for aggregation
+              real-band-powers (assoc :extracted-band-powers real-band-powers)
+
+              ; Include calibration factors for frontend
+              true (assoc :calibration-factors
+                          (or (get-in metadata [:calibration-index :calibration-factors])
+                              (get-in signature-features [:calibration-context :calibration-factors])))
+
+              ; Include band distribution - use calculated or existing
+              band-distribution (assoc :band-distribution band-distribution)
+
+              ; Golden tensor reference
+              signature-features (assoc :golden-tensor-reference
+                                        (or (:golden-tensor signature-features)
+                                            (get-in signature-features [:calibration-context :golden-tensor])
+                                            (get-in signature-features [:golden-tensor-full :spectral :frequency-domain])
+                                            (get-in metadata [:calibration-index :golden-tensor :spectral :frequency-domain])
+                                            (get-in metadata [:calibration-index :golden-tensor])))
+
+              ; Triangulation data
+              signature-features (assoc :triangulation-data
+                                        (:triangulation-data signature-features)))))))
+    (catch Exception e
+      (println "Error extracting metadata from" recording-dir ":" (.getMessage e))
+      nil)))
 (defn aggregate-band-powers
-  "Aggregate band power data from multiple recordings"
+  "Aggregate band power data from multiple recordings - using calibration data"
   [recordings]
   (try
     (let [band-keys [:delta :theta :alpha :beta :gamma :thinking]
 
-          ; Extract band powers from each recording
+          ; Extract band powers from calibration data (what frontend expects)
           all-band-powers (keep (fn [recording]
-                                  (get-in recording [:calibration-index :band-powers]))
+                                  (or (get-in recording [:calibration-index :band-powers])
+                                      (:extracted-band-powers recording)))
                                 recordings)
 
           ; Calculate average for each band
@@ -133,7 +192,8 @@
 
           ; Extract calibration factors from each recording
           all-factors (keep (fn [recording]
-                              (get-in recording [:calibration-index :calibration-factors]))
+                              (or (get-in recording [:calibration-index :calibration-factors])
+                                  (:calibration-factors recording)))
                             recordings)
 
           ; Calculate average for each factor
@@ -163,7 +223,8 @@
 
           ; Extract band distribution from each recording
           all-distributions (keep (fn [recording]
-                                    (get-in recording [:calibration-index :band-distribution]))
+                                    (or (get-in recording [:calibration-index :band-distribution])
+                                        (:band-distribution recording)))
                                   recordings)
 
           ; Calculate average for each distribution value
@@ -185,56 +246,109 @@
       (println "Error aggregating band distribution:" (.getMessage e))
       {:error (.getMessage e)})))
 
-(defn create-signature-summary
-  "Create a summary of signatures for a category"
-  [recordings category]
+(defn aggregate-channel-counts
+  "Aggregate channel count data from multiple recordings"
+  [recordings]
   (try
-    (let [; Sort recordings by timestamp descending (newest first)
-          sorted-recordings (sort-by #(get % :timestamp 0) > recordings)
+    (let [channel-counts (keep (fn [recording]
+                                 (or (:channel-count recording)
+                                     (:channels recording)
+                                     (get-in recording [:metadata :channel-count])
+                                     4))
+                               recordings)]
+      (frequencies channel-counts))
+    (catch Exception e
+      (println "Error aggregating channel counts:" (.getMessage e))
+      {})))
 
-          ; Get the 10 most recent recordings
-          recent-recordings (take 10 sorted-recordings)
+(defn extract-calibration-data-from-metadata
+  "Extract all calibration-related data from recording metadata"
+  [metadata]
+  (let [calibration-index (get metadata :calibration-index)]
+    {:band-powers (get calibration-index :band-powers)
+     :calibration-factors (get calibration-index :calibration-factors)
+     :golden-tensor (get calibration-index :golden-tensor)
+     :band-distribution (get calibration-index :band-distribution)}))
 
-          ; Create summaries
-          all-summary {:category category
-                       :updated-at (java.util.Date.)
-                       :recording-count (count recordings)
-                       :band-powers (aggregate-band-powers recordings)
-                       :calibration-factors (aggregate-calibration-factors recordings)
-                       :band-distribution (aggregate-band-distribution recordings)
-                       :device-types (frequencies (map :device-type recordings))
-                       :channel-counts (frequencies (map :channel-count recordings))
-                       :sampling-rates (frequencies (map :sampling-rate recordings))}
+(defn create-signature-summary
+  "Create signature summary using calibration data (frontend format)"
+  [recordings signature-name]
+  (try
+    (when (seq recordings)
+      (let [; Filter recordings to use for aggregation
+            valid-recordings (filter #(get-in % [:metadata :include-in-aggregation] true) recordings)
 
-          recent-summary {:category category
-                          :updated-at (java.util.Date.)
-                          :recording-count (count recent-recordings)
-                          :band-powers (aggregate-band-powers recent-recordings)
-                          :calibration-factors (aggregate-calibration-factors recent-recordings)
-                          :band-distribution (aggregate-band-distribution recent-recordings)
-                          :device-types (frequencies (map :device-type recent-recordings))
-                          :channel-counts (frequencies (map :channel-count recent-recordings))
-                          :sampling-rates (frequencies (map :sampling-rate recent-recordings))}]
+            _ (println "Creating summary from" (count valid-recordings) "recordings")
 
-      {:all all-summary
-       :recent recent-summary})
+            ; Use calibration data for aggregation (what frontend expects)
+            band-powers-stats (aggregate-band-powers valid-recordings)
+            calibration-factors-stats (aggregate-calibration-factors valid-recordings)
+            band-distribution-stats (aggregate-band-distribution valid-recordings)
+
+            ; Aggregate metadata
+            device-types (frequencies (keep #(or (:device-type %)
+                                                 (get-in % [:metadata :device-type])
+                                                 "GANGLION_BOARD") valid-recordings))
+            sampling-rates (frequencies (keep #(or (:sampling-rate %)
+                                                   (get-in % [:metadata :sampling-rate])
+                                                   200) valid-recordings))
+            channel-counts (aggregate-channel-counts valid-recordings)
+
+            ; Create summary in exact frontend format
+            summary {:updated-at (java.util.Date.)
+                     :category signature-name
+                     :recording-count (count valid-recordings)
+                     :device-types device-types
+                     :sampling-rates sampling-rates
+                     :channel-counts channel-counts
+                     :band-powers band-powers-stats
+                     :calibration-factors calibration-factors-stats
+                     :band-distribution band-distribution-stats}
+
+            ; Create recent summary (last n recordings)
+            recent-recordings (take-last 10 valid-recordings)
+            recent-band-powers (aggregate-band-powers recent-recordings)
+            recent-calibration-factors (aggregate-calibration-factors recent-recordings)
+            recent-band-distribution (aggregate-band-distribution recent-recordings)
+            recent-device-types (frequencies (keep #(or (:device-type %)
+                                                        (get-in % [:metadata :device-type])
+                                                        "GANGLION_BOARD") recent-recordings))
+            recent-sampling-rates (frequencies (keep #(or (:sampling-rate %)
+                                                          (get-in % [:metadata :sampling-rate])
+                                                          200) recent-recordings))
+            recent-channel-counts (aggregate-channel-counts recent-recordings)
+
+            recent-summary {:updated-at (java.util.Date.)
+                            :category signature-name
+                            :recording-count (count recent-recordings)
+                            :device-types recent-device-types
+                            :sampling-rates recent-sampling-rates
+                            :channel-counts recent-channel-counts
+                            :band-powers recent-band-powers
+                            :calibration-factors recent-calibration-factors
+                            :band-distribution recent-band-distribution}]
+        {:all summary
+         :recent recent-summary}))
+
     (catch Exception e
       (println "Error creating signature summary:" (.getMessage e))
+      (.printStackTrace e)
       {:error (.getMessage e)})))
 
+
+
 (defn aggregate-signature-type!
-  "Aggregate recordings for a specific signature type"
+  "Aggregate signature recordings using calibration data"
   [profile-name category signature-type]
   (try
-    ; Find all recording directories for this signature type
     (let [recording-dirs (find-signature-recording-dirs profile-name category signature-type)]
-
       (println "Found" (count recording-dirs) "recordings for signature type:" signature-type)
 
-      ; Extract metadata from each directory
+      ; Extract metadata from each recording directory
       (let [recordings (keep extract-metadata recording-dirs)
+            _ (println "Extracted metadata from" (count recordings) "recordings")
 
-            ; Create signature summary for this specific type
+            ; Create signature summary using calibration data
             summary (create-signature-summary recordings (str category "/" signature-type))
 
             ; Define signature directory and file path
@@ -244,19 +358,19 @@
         ; Ensure the signature directory exists
         (fio/ensure-directory! signature-dir)
 
-        ; Save signature summary to file
+        ; Save signature summary to file in frontend format
         (with-open [w (io/writer signature-file)]
-          (binding [*out* w]
-            (pp/pprint (:all summary))))
+          (binding [*print-length* nil *print-level* nil]
+            (clojure.pprint/pprint (:all summary) w)))
 
-        (println "Successfully aggregated" (count recordings)
+        (println "Successfully aggregated" (count recording-dirs)
                  "recordings for signature type:" signature-type)
         summary))
+
     (catch Exception e
       (println "Error aggregating signature type:" (.getMessage e))
       (.printStackTrace e)
       {:error (.getMessage e)})))
-
 
 (defn aggregate-category-signatures!
   "Aggregate all signatures for a category and save summary to file"
@@ -289,13 +403,15 @@
         ; Save overall summaries to files
         (fio/ensure-directory! category-dir)
 
-        (with-open [w (io/writer all-summary-file)]
-          (binding [*out* w]
-            (pp/pprint (:all overall-summary))))
+        (when (:all overall-summary)
+          (with-open [w (io/writer all-summary-file)]
+            (binding [*out* w]
+              (pp/pprint (:all overall-summary)))))
 
-        (with-open [w (io/writer recent-summary-file)]
-          (binding [*out* w]
-            (pp/pprint (:recent overall-summary))))
+        (when (:recent overall-summary)
+          (with-open [w (io/writer recent-summary-file)]
+            (binding [*out* w]
+              (pp/pprint (:recent overall-summary)))))
 
         (println "Successfully aggregated" (count all-recordings)
                  "signatures for category" category)
@@ -344,19 +460,19 @@
       ; Also update the category.edn file with stats
       (let [stats (get-category-stats profile-name category)
             category-dir (fio/get-wave-lexicon-dir profile-name category)
-            signature-file (io/file category-dir "category.edn")]
+            category-file (io/file category-dir "category.edn")]
 
         ; Merge the stats with the summary data
         (let [category-data {:stats stats
                              :summary summary
                              :updated-at (java.util.Date.)}]
 
-          ; Save to signature-file
-          (with-open [w (io/writer signature-file)]
+          ; Save to category-file
+          (with-open [w (io/writer category-file)]
             (binding [*out* w]
               (pp/pprint category-data)))
 
-          (println "Updated signature-file for" category)
+          (println "Updated category.edn for" category)
           category-data)))
     (catch Exception e
       (println "Error in auto-aggregation:" (.getMessage e))

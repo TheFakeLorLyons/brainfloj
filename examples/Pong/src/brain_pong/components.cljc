@@ -4,7 +4,8 @@
    [hyperfiddle.electric-dom3 :as dom]
    [brain-pong.game-state :as pong-state]
    [brain-pong.bci-integration :as bci]
-   #?(:clj [floj.profiles :as profiles])))
+   #?(:clj [floj.profiles :as profiles])
+   #?(:clj [brain-pong.signature :as signature])))
 
 (e/defn BrainConnectionStatus []
   (e/client
@@ -13,12 +14,13 @@
          active-profile (get-in state [:bci :active-profile])
          recording? (get-in state [:bci :recording?])
          current-category (get-in state [:bci :current-category])
-         #_#_confidence (get-in state [:bci :confidence] {:up 0.0 :down 0.0})]
+         streaming? (get-in state [:bci :streaming?])
+         matching? (get-in state [:bci :matching?])]
 
      (dom/div
       (dom/props {:class "bci-status"})
 
-      ; Connection status
+      ;; Connection status
       (dom/div
        (dom/props {:class (str "status-indicator " (if connected? "connected" "disconnected"))})
        (dom/span (dom/props {:class "status-dot"}) (dom/text ""))
@@ -33,34 +35,17 @@
          (dom/props {:class "recording-status"})
          (dom/text (str "Recording " current-category))))
 
-      ; Confidence meters for up/down movements
-      #_(when connected?
+      ; Streaming status
+      (when streaming?
         (dom/div
-         (dom/props {:class "confidence-meters"})
+         (dom/props {:class "streaming-status"})
+         (dom/text "EEG Streaming Active")))
 
-         ; Up confidence
-         (dom/div
-          (dom/props {:class "confidence-meter"})
-          (dom/label (dom/text "Up: "))
-          (dom/div
-           (dom/props {:class "meter-bar"})
-           (dom/div
-            (dom/props {:class "meter-fill"
-                        :style (str "width: " (* 100 (:up confidence)) "%;")}))
-           (dom/span (dom/props {:class "meter-value"})
-                     (dom/text (.toFixed (* 100 (:up confidence)) 1) "%")))
-
-         ; Down confidence
-          (dom/div
-           (dom/props {:class "confidence-meter"})
-           (dom/label (dom/text "Down: "))
-           (dom/div
-            (dom/props {:class "meter-bar"})
-            (dom/div
-             (dom/props {:class "meter-fill"
-                         :style (str "width: " (* 100 (:down confidence)) "%;")}))
-            (dom/span (dom/props {:class "meter-value"})
-                      (dom/text (.toFixed (* 100 (:down confidence)) 1) "%")))))))))))
+      ; Matching status
+      (when matching?
+        (dom/div
+         (dom/props {:class "matching-status"})
+         (dom/text "Brain Control Enabled")))))))
 
 (e/defn ConnectWhenPending []
   (e/client
@@ -107,51 +92,102 @@
            (js/clearInterval interval)
            (swap! pong-state/state assoc-in [:bci :match-interval] nil)))))))
 
-#_(e/defn StartStreamingWhenMatching []
+(e/defn BCIStateManager []
   (e/client
    (let [state (e/watch pong-state/state)
+         playing? (get-in state [:game :playing?])
          connected? (get-in state [:bci :device-connected?])
-         matching? (get-in state [:bci :matching?])
-         streaming? (get-in state [:bci :streaming?])]
-     ;; Start streaming when we start matching (if not already streaming)
-     (when (and connected? matching? (not streaming?))
-       (js/console.log "Starting EEG streaming for brain activity matching")
-       (let [stream-result (e/server (bci/start-eeg-streaming-server))]
+         streaming? (get-in state [:bci :streaming?])
+         matching? (get-in state [:bci :matching?])]
+
+     ; Handle game start - start streaming first
+     (when (and playing? connected? (not streaming?) (not matching?))
+       (js/console.log "Game started with BCI connected - starting EEG streaming")
+       (let [stream-result (e/server (signature/start-eeg-streaming-server))]
          (js/console.log "Stream start result:" (clj->js stream-result))
          (when (:success stream-result)
-           (swap! pong-state/state assoc-in [:bci :streaming?] true)))))))
+           (swap! pong-state/state assoc-in [:bci :streaming?] true))))
 
-#_(e/defn StopStreamingWhenNotMatching []
-  (e/client
-   (let [state (e/watch pong-state/state)
-         matching? (get-in state [:bci :matching?])
-         streaming? (get-in state [:bci :streaming?])]
-     
-     ; Stop streaming when we stop matching
-     (when (and (not matching?) streaming?)
-       (js/console.log "Stopping EEG streaming")
-       (let [stop-result (e/server (bci/stop-eeg-streaming-server))]
-         (js/console.log "Stream stop result:" (clj->js stop-result))
-         (swap! pong-state/state assoc-in [:bci :streaming?] false))))))
+     ; Handle streaming started - now start matching
+     (when (and playing? connected? streaming? (not matching?))
+       (js/console.log "EEG streaming active - enabling brain control matching")
+       (swap! pong-state/state assoc-in [:bci :matching?] true))
 
-#_(e/defn PollBrainActivityWhenMatching []
+     ; Handle game stop - stop everything
+     (when (and (not playing?) (or streaming? matching?))
+       (js/console.log "Game stopped - stopping BCI streaming and matching")
+       (when matching?
+         (swap! pong-state/state assoc-in [:bci :matching?] false))
+       (when streaming?
+         (let [stop-result (e/server (signature/stop-eeg-streaming-server))]
+           (js/console.log "Stream stop result:" (clj->js stop-result))
+           (swap! pong-state/state assoc-in [:bci :streaming?] false))))
+
+     ; Handle disconnection - stop everything
+     (when (and (not connected?) (or streaming? matching?))
+       (js/console.log "Device disconnected - stopping all BCI activity")
+       (swap! pong-state/state update-in [:bci] merge
+              {:streaming? false
+               :matching? false})))))
+
+; Separate component for brain activity polling with interval-based approach
+
+(e/defn BrainActivityPoller []
   (e/client
    (let [state (e/watch pong-state/state)
          connected? (get-in state [:bci :device-connected?])
          matching? (get-in state [:bci :matching?])
-         streaming? (get-in state [:bci :streaming?])]
-     ; Poll when connected, matching, and streaming
-     (when (and connected? matching? streaming?)
-       ; Should execute whenever the state changes
-       (let [confidence-data (e/server (bci/match-brain-activity-server))]
-         (js/console.log "Brain activity confidence:" (clj->js confidence-data))
+         streaming? (get-in state [:bci :streaming?])
+         should-poll? (and connected? streaming? matching?)
+         current-interval (get-in state [:bci :poll-interval])
+         poll-trigger (get-in state [:bci :poll-trigger])
+         last-poll-time (get-in state [:bci :last-poll-time])]
+     
+     ;; Start interval when conditions are met and no interval exists
+     (when (and should-poll? (not current-interval))
+       (js/console.log "Starting BCI polling interval...")
+       (let [base-interval 1000  ;; Increased from 500ms to 1000ms
+             interval-id (js/setInterval
+                          (fn []
+                            (let [current-time (js/Date.now)
+                                  time-since-last (- current-time (or last-poll-time 0))]
+                              ;; Only poll if enough time has passed (prevent too frequent polling)
+                              (when (> time-since-last (+ base-interval (rand-int 200))) ;; Add 0-200ms jitter
+                                (js/console.log "Interval tick - updating poll trigger...")
+                                (swap! pong-state/state update-in [:bci :poll-trigger] (fnil inc 0))
+                                (swap! pong-state/state assoc-in [:bci :last-poll-time] current-time))))
+                          base-interval)]
+         (swap! pong-state/state assoc-in [:bci :poll-interval] interval-id)))
+     
+     ;; Stop interval when conditions are no longer met
+     (when (and (not should-poll?) current-interval)
+       (js/console.log "Stopping BCI polling interval...")
+       (js/clearInterval current-interval)
+       (swap! pong-state/state assoc-in [:bci :poll-interval] nil))
+     
+     ;; React to poll triggers and make server calls
+     (when (and should-poll? poll-trigger)
+       (js/console.log "Poll trigger fired, calling server..." poll-trigger)
+       (let [confidence-data (e/server
+                              (e/Offload
+                               (fn []
+                                 (println "Server: Fresh call #" poll-trigger "at" (System/currentTimeMillis))
+                                 (signature/match-brain-activity))))]
+         (js/console.log "Server response:" (clj->js confidence-data))
          (when confidence-data
-           (swap! pong-state/state assoc-in [:bci :confidence] confidence-data)))))))
+           ;; Add confidence change detection to reduce repetition
+           (let [current-confidence (get-in @pong-state/state [:bci :confidence])
+                 confidence-changed? (or (nil? current-confidence)
+                                       (> (Math/abs (- (:up confidence-data) (:up current-confidence))) 0.01)
+                                       (> (Math/abs (- (:down confidence-data) (:down current-confidence))) 0.01))]
+             (when confidence-changed?
+               (swap! pong-state/state assoc-in [:bci :confidence] confidence-data)))))))))
 
 (e/defn BrainControls []
   (e/client
    (let [state (e/watch pong-state/state)
          connected? (get-in state [:bci :device-connected?])
+         playing? (get-in state [:game :playing?])
          pending-connect? (get-in state [:bci :pending-connect])
          pending-disconnect? (get-in state [:bci :pending-disconnect])
          active-profile (get-in state [:bci :active-profile])
@@ -162,9 +198,8 @@
 
      (ConnectWhenPending)
      (DisconnectWhenPending)
-     #_(StartStreamingWhenMatching)
-     #_(StopStreamingWhenNotMatching)
-     #_(PollBrainActivityWhenMatching)
+     (BCIStateManager)
+     (BrainActivityPoller)
 
      (dom/div
       (dom/props {:class "bci-controls"})
@@ -185,17 +220,7 @@
                    (swap! pong-state/state assoc-in [:bci :pending-connect] true)))
                nil))
 
-      ; Brain matching toggle (only show when connected)
-      (when connected?
-        (dom/button
-         (dom/props {:class (str "bci-button " (if matching? "stop-matching" "start-matching"))})
-         (dom/text (if matching? "Stop Brain Control" "Start Brain Control"))
-         (dom/On "click"
-                 (fn [_]
-                   (swap! pong-state/state assoc-in [:bci :matching?] (not matching?)))
-                 nil)))
-
-      ; Show active profile info
+      ; Show active profile info and BCI status
       (when (and connected? active-profile)
         (dom/div
          (dom/props {:class "profile-info"})
@@ -203,7 +228,17 @@
          (when streaming?
            (dom/span
             (dom/props {:class "streaming-indicator"})
-            (dom/text " • Streaming")))))
+            (dom/text " • Streaming")))
+         (when (and matching? playing?)
+           (dom/span
+            (dom/props {:class "matching-indicator"})
+            (dom/text " • Brain Control Active")))))
+
+      ; Show BCI status message when connected but not playing
+      (when (and connected? (not playing?))
+        (dom/div
+         (dom/props {:class "bci-status-message"})
+         (dom/text "BCI ready - Start the game to enable brain control")))
 
       ; Show brain activity confidence when matching
       (when (and connected? matching? confidence)
@@ -281,59 +316,59 @@
                 nil)))))))
 
 #_(e/defn CalibrationControl []
-  (e/client
-   (let [state (e/watch pong-state/state)
-         connected? (get-in state [:bci :device-connected?])
-         recording? (get-in state [:bci :recording?])
-         current-category (get-in state [:bci :current-category])
-         matching? (get-in state [:bci :matching?])]
-     (dom/div
-      (dom/props {:class "calibration-controls"})
-      (dom/h3 (dom/text "Brain Calibration"))
+    (e/client
+     (let [state (e/watch pong-state/state)
+           connected? (get-in state [:bci :device-connected?])
+           recording? (get-in state [:bci :recording?])
+           current-category (get-in state [:bci :current-category])
+           matching? (get-in state [:bci :matching?])]
+       (dom/div
+        (dom/props {:class "calibration-controls"})
+        (dom/h3 (dom/text "Brain Calibration"))
 
       ; Calibration instructions
-      (dom/div
-       (dom/props {:class "calibration-instructions"})
-       (dom/text "Record your brain patterns while thinking about moving the paddle up or down."))
+        (dom/div
+         (dom/props {:class "calibration-instructions"})
+         (dom/text "Record your brain patterns while thinking about moving the paddle up or down."))
 
       ; "Up" recording button
-      (dom/div
-       (dom/props {:class "recording-button-group"})
-       (dom/button
-        (dom/props {:class (str "recording-button up-button"
-                                (when (and recording? (= current-category "up")) " active"))
-                    :disabled (or (not connected?) (and recording? (not= current-category "up")))})
-        (dom/text (if (and recording? (= current-category "up")) "Stop Recording Up" "Record Up"))
-        (dom/On "click" (fn [_]
-                          (if (and recording? (= current-category "up"))
-                            (bci/stop-recording!)
-                            (bci/start-recording! "up")))
-                nil))
+        (dom/div
+         (dom/props {:class "recording-button-group"})
+         (dom/button
+          (dom/props {:class (str "recording-button up-button"
+                                  (when (and recording? (= current-category "up")) " active"))
+                      :disabled (or (not connected?) (and recording? (not= current-category "up")))})
+          (dom/text (if (and recording? (= current-category "up")) "Stop Recording Up" "Record Up"))
+          (dom/On "click" (fn [_]
+                            (if (and recording? (= current-category "up"))
+                              (bci/stop-recording!)
+                              (bci/start-recording! "up")))
+                  nil))
 
        ; "Down" recording button  
-       (dom/button
-        (dom/props {:class (str "recording-button down-button"
-                                (when (and recording? (= current-category "down")) " active"))
-                    :disabled (or (not connected?) (and recording? (not= current-category "down")))})
-        (dom/text (if (and recording? (= current-category "down")) "Stop Recording Down" "Record Down"))
-        (dom/On "click" (fn [_]
-                          (if (and recording? (= current-category "down"))
-                            (bci/stop-recording!)
-                            (bci/start-recording! "down")))
-                nil)))
+         (dom/button
+          (dom/props {:class (str "recording-button down-button"
+                                  (when (and recording? (= current-category "down")) " active"))
+                      :disabled (or (not connected?) (and recording? (not= current-category "down")))})
+          (dom/text (if (and recording? (= current-category "down")) "Stop Recording Down" "Record Down"))
+          (dom/On "click" (fn [_]
+                            (if (and recording? (= current-category "down"))
+                              (bci/stop-recording!)
+                              (bci/start-recording! "down")))
+                  nil)))
 
       ; Start/Stop brain activity matching
-      (dom/div
-       (dom/props {:class "matching-controls"})
-       (dom/button
-        (dom/props {:class (str "matching-button" (when matching? " active"))
-                    :disabled (not connected?)})
-        (dom/text (if matching? "Stop Brain Control" "Start Brain Control"))
-        (dom/On "click" (fn [_]
-                          (if matching?
-                            (bci/stop-activity-matching!)
-                            (bci/start-activity-matching!)))
-                nil)))))))
+        (dom/div
+         (dom/props {:class "matching-controls"})
+         (dom/button
+          (dom/props {:class (str "matching-button" (when matching? " active"))
+                      :disabled (not connected?)})
+          (dom/text (if matching? "Stop Brain Control" "Start Brain Control"))
+          (dom/On "click" (fn [_]
+                            (if matching?
+                              (bci/stop-activity-matching!)
+                              (bci/start-activity-matching!)))
+                  nil)))))))
 
 (e/defn BCIPanel []
   (e/client

@@ -9,7 +9,9 @@
             [floj.stream-manager :as stream]
             [floj.brainflow.board-shim :as brainflow]
             [floj.categorization :as category]
-            [floj.api :as api]))
+            [floj.profiles :as profiles]
+            [floj.api :as api]
+            [zprint.core :as zp]))
 
 (def ^:private MIN_SAMPLES_FOR_SIGNATURE 20)
 (def ^:private SIMILARITY_THRESHOLD 0.75)
@@ -17,63 +19,62 @@
 
 (defn fill-initial-lexicon!
   "Initialize the wave lexicon directory structure and create default categories"
-  []
-  (let [default-profile-name (:name ((:get-active-profile @state/state)))]
-    (try
-      (let [pong-dir (fio/get-wave-lexicon-dir default-profile-name "pong")
-            pong-up-dir (str pong-dir "/up")
-            pong-down-dir (str pong-dir "/down")]
+  [profile-name]
+  (try
+    (let [pong-dir (fio/get-wave-lexicon-dir profile-name "pong")
+          pong-up-dir (str pong-dir "/up")
+          pong-down-dir (str pong-dir "/down")]
 
-        (fio/ensure-directory! pong-dir)
-        (fio/ensure-directory! pong-up-dir)
-        (fio/ensure-directory! pong-down-dir)
+      (fio/ensure-directory! pong-dir)
+      (fio/ensure-directory! pong-up-dir)
+      (fio/ensure-directory! pong-down-dir)
 
-        (spit (str pong-dir "/README.md")
-              "# Pong Wave Signatures\n\nThis directory contains your recorded brain patterns for controlling the Pong game.\n\n- The 'up' directory contains recordings when you're thinking about moving the paddle up\n- The 'down' directory contains recordings when you're thinking about moving the paddle down\n\nTo add new recordings, use the 'A' key in the CLI and select the appropriate category.")
+      (spit (str pong-dir "/README.md")
+            "# Pong Wave Signatures\n\nThis directory contains your recorded brain patterns for controlling the Pong game.\n\n- The 'up' directory contains recordings when you're thinking about moving the paddle up\n- The 'down' directory contains recordings when you're thinking about moving the paddle down\n\nTo add new recordings, use the 'A' key in the CLI and select the appropriate category.")
 
-        (spit (str pong-up-dir "/README.md")
-              "# Up Movement Recordings\n\nThis directory will contain your recorded brain patterns for moving the paddle upward.\nTo add a new recording, use the 'A' key in the CLI.")
+      (spit (str pong-up-dir "/README.md")
+            "# Up Movement Recordings\n\nThis directory will contain your recorded brain patterns for moving the paddle upward.\nTo add a new recording, use the 'A' key in the CLI.")
 
-        (spit (str pong-down-dir "/README.md")
-              "# Down Movement Recordings\n\nThis directory will contain your recorded brain patterns for moving the paddle downward.\nTo add a new recording, use the 'A' key in the CLI.")
+      (spit (str pong-down-dir "/README.md")
+            "# Down Movement Recordings\n\nThis directory will contain your recorded brain patterns for moving the paddle downward.\nTo add a new recording, use the 'A' key in the CLI.")
 
-        (let [config-path (str (fio/config-base-dir) "/config.edn")
-              config (if (.exists (io/file config-path))
-                       (edn/read-string (slurp config-path))
-                       {})
-              updated-config (update config :wave-lexicon-categories
-                                     #(if (seq %)
-                                        (if (some #{:pong-up :pong-down} %)
-                                          %
-                                          (conj % :pong-up :pong-down))
-                                        [:pong-up :pong-down]))]
-          (spit config-path (pr-str updated-config))))
-      (println (str "Loaded " default-profile-name "'s wave-lexicon!"))
-      (catch Exception e
-        (println "Error initializing wave lexicon:" (.getMessage e))
-        (.printStackTrace e)))))
+      (let [config-path (str (fio/config-base-dir) "/config.edn")
+            config (if (.exists (io/file config-path))
+                     (edn/read-string (slurp config-path))
+                     {})
+            updated-config (update config :wave-lexicon-categories
+                                   #(if (seq %)
+                                      (if (some #{:pong-up :pong-down} %)
+                                        %
+                                        (conj % :pong-up :pong-down))
+                                      [:pong-up :pong-down]))]
+        (spit config-path (pr-str updated-config))))
+    (println (str "Loaded " profile-name "'s wave-lexicon!"))
+    (catch Exception e
+      (println "Error initializing wave lexicon:" (.getMessage e))
+      (.printStackTrace e))))
 
 (defn list-wave-signature-categories
   "List all wave signature categories for a profile"
   []
- (try
-   (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
-         lexicon-dir (fio/get-wave-lexicon-dir profile-name "")]
-     (if (.exists (io/file lexicon-dir))
-       (let [dirs (filter #(.isDirectory %)
-                          (or (seq (.listFiles (io/file lexicon-dir))) []))
-             categories (map #(.getName %) dirs)]
-         (println "Found" (count categories) "lexicon categories:")
-         (doseq [category categories]
-           (println "  -" category))
-         categories)
-       (do
-         (println "No lexicon directory found for profile" profile-name)
-         [])))
-   (catch Exception e
-     (println "Error listing lexicon categories:" (.getMessage e))
-     (.printStackTrace e)
-     [])))
+  (try
+    (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
+          lexicon-dir (fio/get-wave-lexicon-dir profile-name "")]
+      (if (.exists (io/file lexicon-dir))
+        (let [dirs (filter #(.isDirectory %)
+                           (or (seq (.listFiles (io/file lexicon-dir))) []))
+              categories (map #(.getName %) dirs)]
+          (println "Found" (count categories) "lexicon categories:")
+          (doseq [category categories]
+            (println "  -" category))
+          categories)
+        (do
+          (println "No lexicon directory found for profile" profile-name)
+          [])))
+    (catch Exception e
+      (println "Error listing lexicon categories:" (.getMessage e))
+      (.printStackTrace e)
+      [])))
 
 (defn list-wave-signatures-in-category
   "List all wave signatures within a category"
@@ -280,8 +281,110 @@
     (catch Exception e
       (println "Error matching brain activity:" (.getMessage e)))))
 
+(defn triangulate-signature-features
+  "Triangulate between live recording, golden tensor baseline, and existing signature patterns"
+  [signature-features calibration-context category signature-name]
+  (try
+    (let [profile (profiles/get-active-profile)
+          profile-name (:name profile)
+          existing-signature (try
+                               (let [signature-file (str (fio/get-wave-lexicon-dir profile-name category)
+                                                         "/" signature-name "/signature.edn")]
+                                 (when (.exists (io/file signature-file))
+                                   (edn/read-string (slurp signature-file))))
+                               (catch Exception e
+                                 (println "No existing signature found for" category "/" signature-name)
+                                 nil))
+
+          ; Extract the three key data sources
+          live-band-powers (:band-powers signature-features)
+          golden-tensor-powers (get-in calibration-context [:golden-tensor])
+          calibration-baseline-powers (get calibration-context :band-powers)
+          existing-signature-powers (get-in existing-signature [:band-powers :average])
+
+          ; Calculate triangulation relationships
+          ; 1. Live vs Golden Tensor (deviation from ideal baseline)
+          golden-tensor-ratios (when golden-tensor-powers
+                                 (into {} (for [[band live-power] live-band-powers]
+                                            (let [golden-power (get golden-tensor-powers band 1.0)]
+                                              [band (if (> golden-power 0) (/ live-power golden-power) 1.0)]))))
+
+          ; 2. Live vs Current Calibration (deviation from current session baseline)
+          calibration-ratios (when calibration-baseline-powers
+                               (into {} (for [[band live-power] live-band-powers]
+                                          (let [cal-power (get calibration-baseline-powers band 1.0)]
+                                            [band (if (> cal-power 0) (/ live-power cal-power) 1.0)]))))
+
+          ; 3. Live vs Existing Signature (similarity to learned pattern)
+          signature-ratios (when existing-signature-powers
+                             (into {} (for [[band live-power] live-band-powers]
+                                        (let [sig-power (get existing-signature-powers band 1.0)]
+                                          [band (if (> sig-power 0) (/ live-power sig-power) 1.0)]))))
+
+          ; Calculate multi-dimensional signature strength
+          triangulated-strength (let [live-total (reduce + (vals live-band-powers))
+                                      golden-total (when golden-tensor-powers
+                                                     (reduce + (vals golden-tensor-powers)))
+                                      cal-total (when calibration-baseline-powers
+                                                  (reduce + (vals calibration-baseline-powers)))
+                                      sig-total (when existing-signature-powers
+                                                  (reduce + (vals existing-signature-powers)))]
+                                  {:live-intensity live-total
+                                   :vs-golden-tensor (when golden-total
+                                                       (if (> golden-total 0) (/ live-total golden-total) 1.0))
+                                   :vs-calibration (when cal-total
+                                                     (if (> cal-total 0) (/ live-total cal-total) 1.0))
+                                   :vs-signature (when sig-total
+                                                   (if (> sig-total 0) (/ live-total sig-total) 1.0))})
+
+          ; Create comprehensive triangulation data
+          triangulation-data {:golden-tensor-ratios golden-tensor-ratios
+                              :calibration-ratios calibration-ratios
+                              :signature-ratios signature-ratios
+                              :triangulated-strength triangulated-strength
+                              :pattern-recognition {:has-existing-signature (boolean existing-signature-powers)
+                                                    :signature-confidence (when signature-ratios
+                                                                            (let [ratios (vals signature-ratios)
+                                                                                  avg-ratio (/ (reduce + ratios) (count ratios))
+                                                                                  variance (/ (reduce + (map #(Math/pow (- % avg-ratio) 2) ratios))
+                                                                                              (count ratios))]
+                                                                              {:average-similarity avg-ratio
+                                                                               :pattern-variance variance}))
+                                                    :novelty-score (when (and golden-tensor-ratios calibration-ratios)
+                                                                     (let [golden-avg (/ (reduce + (vals golden-tensor-ratios))
+                                                                                         (count golden-tensor-ratios))
+                                                                           cal-avg (/ (reduce + (vals calibration-ratios))
+                                                                                      (count calibration-ratios))]
+                                                                       (Math/abs (- golden-avg cal-avg))))}
+                              :triangulation-timestamp (System/currentTimeMillis)}
+
+          ; Create detailed comparison matrix
+          detailed-comparison {:three-way-analysis
+                               (when (and live-band-powers golden-tensor-powers calibration-baseline-powers)
+                                 (into {} (for [[band live-power] live-band-powers]
+                                            (let [golden-power (get golden-tensor-powers band 1.0)
+                                                  cal-power (get calibration-baseline-powers band 1.0)
+                                                  sig-power (get existing-signature-powers band 1.0)]
+                                              [band {:live live-power
+                                                     :golden-tensor golden-power
+                                                     :calibration cal-power
+                                                     :existing-signature sig-power
+                                                     :live-vs-golden (if (> golden-power 0) (/ live-power golden-power) 1.0)
+                                                     :live-vs-calibration (if (> cal-power 0) (/ live-power cal-power) 1.0)
+                                                     :live-vs-signature (if (> sig-power 0) (/ live-power sig-power) 1.0)
+                                                     :golden-vs-calibration (if (> cal-power 0) (/ golden-power cal-power) 1.0)}]))))}]
+
+      ; Return enhanced signature features with full triangulation
+      (assoc signature-features
+             :triangulation-data triangulation-data
+             :calibration-comparison detailed-comparison))
+
+    (catch Exception e
+      (println "Error in triangulation:" (.getMessage e))
+      signature-features)))
+
 (defn create-wave-signature-context
-  "Create a recording context for a wave signature"
+  "Create a recording context for a wave signature that enhances existing recording context"
   [profile-name category signature-name & {:keys [include-in-aggregation] :or {include-in-aggregation true}}]
   (try
     (let [timestamp (System/currentTimeMillis)
@@ -289,70 +392,89 @@
                              "/" (str/lower-case signature-name) "_" timestamp)
           board-id (brainflow/get-board-id @state/shim)
           device-name (brainflow/get-device-name board-id)
-          metadata {:recording-id (str "wave_signature_" timestamp)
-                    :start-time timestamp
-                    :recorded-at (java.util.Date.)
-                    :device-type device-name
-                    :board-id board-id
-                    :sampling-rate (api/get-current-sample-rate)
-                    :category (name category)
-                    :signature-name (name signature-name)
-                    :is-wave-signature true
-                    :include-in-aggregation include-in-aggregation
-                    :version "1.0"
-                    :channel-count (brainflow/get-eeg-channels board-id)}
+
+          ; Get existing recording context if it exists
+          existing-context @state/recording-context
+
+          ; Wave signature specific metadata
+          wave-signature-metadata {:category (name category)
+                                   :signature-name (name signature-name)
+                                   :is-wave-signature true
+                                   :include-in-aggregation include-in-aggregation
+                                   :wave-signature-timestamp timestamp}
+
+          ; Enhanced metadata that combines existing with wave signature data
+          enhanced-metadata (merge (:metadata existing-context)
+                                   wave-signature-metadata)
 
           context {:lorfile-dir signature-dir
-                   :metadata metadata}]
+                   :metadata enhanced-metadata
+                   :wave-signature-context true}]
+
+      ; Update the recording context by merging, not replacing
+      (swap! state/recording-context merge context)
+
       context)
+
     (catch Exception e
       (println "Error creating wave signature context:" (.getMessage e))
       (.printStackTrace e)
       nil)))
 
 (defn start-wave-signature-recording!
-  "Start recording a wave signature"
+  "Start recording a wave signature with proper calibration - FIXED VERSION"
   [category signature-name & {:keys [include-in-aggregation] :or {include-in-aggregation true}}]
   (try
     (when (or (str/blank? category) (str/blank? signature-name))
       (throw (Exception. "Category and signature name must be provided")))
-
     (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
-          context (create-wave-signature-context profile-name category signature-name
-                                                 :include-in-aggregation include-in-aggregation)
           recording-dir (str (fio/get-wave-lexicon-dir profile-name category)
                              "/" signature-name)
           recording-info {:recording-type signature-name
                           :path recording-dir}]
-
-      (when-not context
-        (throw (Exception. "Failed to create recording context")))
-
-      ; Store context for recording
-      (reset! state/recording-context context)
-
-      ; Add tag for wave signature start
-      (swap! state/tags conj {:timestamp (:start-time (:metadata context))
-                              :label (str "WAVE_SIGNATURE_START:"
-                                          (name category) "/" (name signature-name))})
-
-      ; Reset EEG data collection
-      (reset! state/eeg-data [])
-
-      ; Start the actual recording
+      
+      ; Start recording using existing infrastructure
       (record/start-recording! recording-info)
-
-      ; Log success
-      (println "Started recording wave signature for" category "/" signature-name
+      
+      ; Fresh calibration update immediately for wave signatures
+      (println "Forcing fresh calibration for wave signature...")
+      (reset! record/last-calibration-update 0) ; Reset to force immediate update
+      
+      ; Enhance recording context with wave signature data
+      (swap! state/recording-context merge
+             {:wave-signature-metadata {:category (name category)
+                                        :signature-name (name signature-name)
+                                        :is-wave-signature true
+                                        :include-in-aggregration include-in-aggregation
+                                        :wave-signature-timestamp (System/currentTimeMillis)}})
+      
+      ; Update the main metadata in recording context
+      (swap! state/recording-context update-in [:metadata] merge
+             {:category (name category)
+              :signature-name (name signature-name)
+              :is-wave-signature true
+              :include-in-aggregation include-in-aggregation
+              :force-fresh-calibration true}) ; Flag to ensure fresh calibration
+      
+      ; Add start tag
+      (let [start-time (System/currentTimeMillis)]
+        (swap! state/tags conj {:timestamp start-time
+                                :label (str "WAVE_SIGNATURE_START:"
+                                            (name category) "/" (name signature-name))}))
+      
+      (println "Started wave signature recording for" category "/" signature-name
                (if include-in-aggregation "" "(practice mode - will not be aggregated)"))
-
-      ; Return context for reference
-      context)
+      
+      ; Wait a moment then force calibration update
+      (future
+        (Thread/sleep 1000) ; Give it a second to collect some data
+        (record/update-calibration-if-needed!))
+      
+      @state/recording-context)
     (catch Exception e
       (println "Error starting wave signature recording:" (.getMessage e))
       (.printStackTrace e)
       nil)))
-
 (defn create-category-context
   "Create a recording context for a wave signature category"
   [profile-name category]
@@ -449,84 +571,50 @@
   "Extract features from EEG data for signature matching"
   [eeg-data sampling-rate]
   (try
-    (println "Extracting features from" (count eeg-data) "data points")
-    (when (empty? eeg-data)
-      (throw (Exception. "No EEG data provided")))
-    (let [data-format (cond
-                        (and (seq eeg-data) (map? (first eeg-data))) :map-format
-                        (and (vector? eeg-data) (every? vector? eeg-data)) :vector-of-vectors
-                        :else :unknown)
-          ;; Convert to proper format [channels][samples]
-          #_ (println "eeg-data " eeg-data)
-          normalized-data (case data-format
-                            :map-format
-                            (let [channel-keys (remove #{:timestamp} (keys (first eeg-data)))]
-                              (vec (for [k channel-keys]
-                                     (mapv #(get % k 0.0) eeg-data))))
-                            :vector-of-vectors
-                            (apply mapv vector (map rest eeg-data))
+    (println "Extracting signature features from" (count eeg-data) "EEG samples")
 
-                            (stream/normalize-data-format eeg-data))
-          _ (when (or (not (vector? normalized-data))
-                      (empty? normalized-data)
-                      (not (vector? (first normalized-data))))
-              (throw (Exception. (str "Invalid data format for band power extraction: "
-                                      (type normalized-data)))))
+     ; Extract the EEG matrix: [{:eeg [[samples]], :timestamp}] -> [[channels][samples]]
+    (let [raw-eeg-matrix (mapcat :eeg eeg-data)
+           ; Remove timestamps: [timestamp ch1 ch2 ch3 ch4] -> [ch1 ch2 ch3 ch4]
+          without-timestamps (mapv rest raw-eeg-matrix)
+           ; Convert to [channels][samples] format
+          channels-samples (apply mapv vector without-timestamps)
 
-          band-powers (calibrate/extract-band-powers normalized-data sampling-rate)
+           ; Extract FRESH band powers from the actual signature data
+          signature-band-powers (calibrate/extract-band-powers channels-samples sampling-rate)
 
-          ; EEG Data looks like: [{:eeg [[147.0 ch1 ch2 ch3 ch4] ...
-          ; Convert to proper format [channels][samples]
-          raw-eeg-matrix (-> eeg-data first :eeg) ; Pull out the actual matrix
-          without-timestamps (mapv rest raw-eeg-matrix) ; Drop timestamps
-          vector-data (apply mapv vector without-timestamps)
+           ; Calculate signature-specific statistics
+          channel-stats (for [channel channels-samples]
+                          (let [mean (/ (reduce + channel) (count channel))
+                                variance (/ (reduce + (map #(Math/pow (- % mean) 2) channel))
+                                            (count channel))
+                                std-dev (Math/sqrt variance)]
+                            {:mean mean :std-dev std-dev :variance variance}))
 
-          ; Calculate temporal features (amplitude variation)
-          amplitude-stats (for [channel vector-data]
-                            (let [mean (/ (reduce + channel) (count channel))
-                                  variance (/ (reduce + (map #(Math/pow (- % mean) 2) channel))
-                                              (count channel))
-                                  std-dev (Math/sqrt variance)
-                                  min-val (apply min channel)
-                                  max-val (apply max channel)
-                                  range-val (- max-val min-val)]
-                              {:mean mean
-                               :std-dev std-dev
-                               :range range-val
-                               :min min-val
-                               :max max-val}))
-          _ (println "amplitude-stats" amplitude-stats)
-          ; Calculate coherence between channels (simple version)
-          channel-coherence (when (> (count vector-data) 1)
-                              (for [i (range (count vector-data))
-                                    j (range (inc i) (count vector-data))
-                                    :when (< i j)]
-                                (let [ch1 (nth vector-data i)
-                                      ch2 (nth vector-data j)
-                                      corr (calculate-correlation ch1 ch2)]
-                                  {:channels [i j]
-                                   :correlation corr})))
-          _ (println "channel-coherence" channel-coherence)
-          ; Combine all features
-          features {:band-powers band-powers
-                    :temporal-stats amplitude-stats
-                    :channel-coherence channel-coherence
-                    :timestamp (System/currentTimeMillis)
-                    :channels (count vector-data)
-                    :samples (if (> (count vector-data) 0)
-                               (count (first vector-data))
-                               0)
-                    :duration (if (and (> (count vector-data) 0) (> sampling-rate 0))
-                                (/ (count (first vector-data)) sampling-rate)
-                                0)}]
-_ (println "features" features)
-      features)
+           ; Calculate power distribution (what makes this signature unique)
+          total-power (reduce + (vals signature-band-powers))
+          power-distribution (into {} (for [[band power] signature-band-powers]
+                                        [band (/ power total-power)]))
+
+           ; Signature strength (how distinct this pattern is)
+          signature-strength (let [powers (vals signature-band-powers)
+                                   max-power (apply max powers)
+                                   min-power (apply min powers)]
+                               (if (> min-power 0)
+                                 (/ max-power min-power)
+                                 1.0))]
+
+      {:band-powers signature-band-powers
+       :power-distribution power-distribution
+       :signature-strength signature-strength
+       :channel-statistics channel-stats
+       :sample-count (count raw-eeg-matrix)
+       :duration (/ (count raw-eeg-matrix) sampling-rate)})
+
     (catch Exception e
       (println "Error extracting signature features:" (.getMessage e))
       (.printStackTrace e)
-      ;; Return basic fallback features
-      {:band-powers {:delta 0.2 :theta 0.15 :alpha 0.25 :beta 0.3 :gamma 0.1}
-       :timestamp (System/currentTimeMillis)})))
+      nil)))
 
 (defn create-signature-template
   "Create a template from signature features"
@@ -537,94 +625,141 @@ _ (println "features" features)
    :created-at (java.util.Date.)})
 
 (defn process-wave-signature!
-  "Process recorded EEG data into a wave signature"
-  [eeg-data recording-dir metadata]
+  "Process wave signature with proper triangulation"
+  [recording-dir enhanced-metadata]
   (try
-    (let [SRATE (api/get-current-sample-rate)
-          features (extract-signature-features eeg-data SRATE)
-          feature-path (str recording-dir "/signature_features.edn")]
-      (spit feature-path (pr-str features))
-      (create-signature-template features))
+    ; Get the actual EEG data from the recording
+    (let [eeg-data @state/eeg-data
+          sampling-rate (:sampling-rate enhanced-metadata)
+          category (:category enhanced-metadata)
+          signature-name (:signature-name enhanced-metadata)
+
+          ; Extract signature features from the actual EEG data
+          signature-features (extract-signature-features eeg-data sampling-rate)
+
+          ; Get recent calibration context (this should have real calibration factors now)
+          calibration-context (get enhanced-metadata :calibration-index)
+
+          ; Triangulate the signature features
+          triangulated-features (triangulate-signature-features
+                                 signature-features
+                                 calibration-context
+                                 category
+                                 signature-name)
+
+          ; Calculate band distribution from calibration band powers if available
+          calibration-band-distribution (when-let [band-powers (get calibration-context :band-powers)]
+                                          (let [total-power (reduce + (vals band-powers))]
+                                            (when (> total-power 0)
+                                              (into {} (for [[band power] band-powers]
+                                                         [band (/ power total-power)])))))
+
+          ; Create signature data with triangulated features as the main content
+          signature-data {:signature-features triangulated-features
+
+                         ; Reference calibration data (background context) - with calculated distribution
+                          :calibration-context {:band-powers (get calibration-context :band-powers)
+                                                :calibration-factors (get calibration-context :calibration-factors)
+                                                :golden-tensor (get calibration-context :golden-tensor)
+                                                :band-distribution (or (get calibration-context :band-distribution)
+                                                                       calibration-band-distribution)}
+                          :signature-metadata {:category category
+                                               :signature-name signature-name
+                                               :recording-id (:recording-id enhanced-metadata)
+                                               :device-type (:device-type enhanced-metadata)
+                                               :channel-count (:channel-count enhanced-metadata)
+                                               :sampling-rate sampling-rate
+                                               :sample-count (:sample-count enhanced-metadata)
+                                               :recorded-at (:recorded-at enhanced-metadata)}
+                          :processed-at (java.util.Date.)
+                          :tags (:tags enhanced-metadata)
+                          :include-in-aggregation (:include-in-aggregation enhanced-metadata)}
+
+          signature-file (str recording-dir "/signature_features.edn")
+          metadata-file (str recording-dir "/recording_metadata.edn")]
+
+      (with-open [w (clojure.java.io/writer signature-file)]
+        (binding [*print-length* nil *print-level* nil]
+          (clojure.pprint/pprint signature-data w)))
+
+      ; Update recording metadata with signature processing info
+      (when (.exists (clojure.java.io/file metadata-file))
+        (let [existing-metadata (edn/read-string (slurp metadata-file))
+              updated-metadata (assoc existing-metadata
+                                      :signature-features-path signature-file
+                                      :signature-processed-at (java.util.Date.)
+                                      :signature-data-available true
+                                      :triangulation-completed true)]
+          (with-open [w (clojure.java.io/writer metadata-file)]
+            (binding [*print-length* nil *print-level* nil]
+              (clojure.pprint/pprint updated-metadata w)))))
+
+      (println "Saved triangulated signature features to:" signature-file)
+      signature-data)
+
     (catch Exception e
       (println "Error processing wave signature:" (.getMessage e))
-      (.printStackTrace e))))
+      (.printStackTrace e)
+      nil)))
 
 (defn stop-wave-signature-recording!
-  "Stop recording a wave signature and process it"
+  "Stop wave signature recording and process the signature"
   [category signature]
   (try
-    (let [context @state/recording-context
-          _ (println "CTXT STOPPING : " context)]
-
-          ; Add end tag
-      (let [timestamp (System/currentTimeMillis)
-            _ (println "Category " category)]
+    (let [context @state/recording-context]
+      ;; Add end tag
+      (let [timestamp (System/currentTimeMillis)]
         (swap! state/tags conj {:timestamp timestamp
                                 :label (str "WAVE_SIGNATURE_END:"
                                             category "/" signature)}))
 
-      (println "before context ends " context)
-          ; Stop recording
+      ; Stop recording (this handles the metadata)
       (record/stop-recording!)
 
-          ; Process the recording into a wave signature
+      ; Process signature using existing metadata
       (let [recording-dir (:lorfile-dir context)
-            metadata (get-in context [:metadata])
+            metadata-file (str recording-dir "/recording_metadata.edn")
+            existing-metadata (when (.exists (io/file metadata-file))
+                                (edn/read-string (slurp metadata-file)))
             eeg-data @state/eeg-data
             profile-name (:name ((:get-active-profile @state/state)))
-            include-in-aggregation (get metadata :include-in-aggregation true)
+            include-in-aggregation (get-in context [:metadata :include-in-aggregation] true)]
 
-                ; Additional signature-specific metadata
-            signature-metadata (merge metadata
-                                      {:sample-count (count eeg-data)
-                                       :tags @state/tags
-                                       :processed-at (java.util.Date.)})]
+        ; Enhance metadata with wave signature specific fields
+        (when existing-metadata
+          (let [enhanced-metadata (merge existing-metadata
+                                         {:sample-count (count eeg-data)
+                                          :tags @state/tags
+                                          :category (name category)
+                                          :signature-name (name signature)
+                                          :is-wave-signature true
+                                          :include-in-aggregation include-in-aggregation})]
 
-        (spit (str recording-dir "/recording_metadata.edn")
-              (pr-str signature-metadata))
+            ; Write enhanced metadata
+            (with-open [w (io/writer metadata-file)]
+              (binding [*print-length* nil
+                        *print-level* nil]
+                (clojure.pprint/pprint enhanced-metadata w)))
 
-              ; Save tags separately for easy access
-        (spit (str recording-dir "/tags.edn")
-              (pr-str @state/tags))
+            ; Process signature features using existing calibration data
+            (when (>= (count eeg-data) 10) ; MIN_SAMPLES_FOR_SIGNATURE
+              (process-wave-signature! recording-dir enhanced-metadata)
 
-        (println "Count of samples " (count eeg-data))
-              ; Process the signature features if we have enough data
-        (if (>= (count eeg-data) MIN_SAMPLES_FOR_SIGNATURE)
-          (do
-            (process-wave-signature! eeg-data recording-dir signature-metadata)
-            (println "Successfully processed wave signature for "
-                     category "/" signature)
-
-              ;; Auto-aggregate the category data
-            (if include-in-aggregation
-              (do
-                (println "Attempting to aggregate category data for" category " for " (:name ((:get-active-profile @state/state))))
+              ; Auto-aggregate
+              (when include-in-aggregation
                 (try
-                    ;; Make sure we're using the correct namespace and function
                   (category/aggregate-after-recording! profile-name category signature)
                   (println "Category aggregation completed successfully")
                   (catch Exception agg-e
-                    (println "Error during category aggregation:" (.getMessage agg-e))
-                    (.printStackTrace agg-e))))
-              (println "Skipping aggregation (include-in-aggregation is false)"))
+                    (println "Error during category aggregation:" (.getMessage agg-e))))))
 
-            recording-dir)
-          (do
-            (println "Not enough data to process wave signature. Minimum required:"
-                     MIN_SAMPLES_FOR_SIGNATURE)
-            nil))))
+            recording-dir))))
 
-      ;; Ensure recording is stopped in all cases
-      (when @state/recording?
-        (record/stop-recording!))
     (catch Exception e
       (println "Error stopping wave signature recording:" (.getMessage e))
       (.printStackTrace e)
-      ;; Ensure recording is stopped even on error
       (when @state/recording?
-        (record/stop-recording!))))
-  nil)
-
+        (record/stop-recording!)))))
 
 (defn stop-category-recording!
   "Stop recording a wave signature category and process it"
@@ -687,167 +822,166 @@ _ (println "features" features)
   nil)
 
 (defn add-wave-category
-   "Interactive command to add a new wave category"
-   []
-   (try
-     (print "Enter new category name: ")
-     (flush)
-     (let [category-name (read-line)]
-       (when-not (str/blank? category-name)
-         (let [config-path (str (fio/config-base-dir) "/config.edn")
-               config (if (.exists (io/file config-path))
-                        (edn/read-string (slurp config-path))
-                        {})
-               updated-config (update config :wave-lexicon-categories
-                                      #(if (seq %)
-                                         (conj % (keyword category-name))
-                                         [(keyword category-name)]))]
-           (spit config-path (pr-str updated-config)))
+  "Interactive command to add a new wave category"
+  []
+  (try
+    (print "Enter new category name: ")
+    (flush)
+    (let [category-name (read-line)]
+      (when-not (str/blank? category-name)
+        (let [config-path (str (fio/config-base-dir) "/config.edn")
+              config (if (.exists (io/file config-path))
+                       (edn/read-string (slurp config-path))
+                       {})
+              updated-config (update config :wave-lexicon-categories
+                                     #(if (seq %)
+                                        (conj % (keyword category-name))
+                                        [(keyword category-name)]))]
+          (spit config-path (pr-str updated-config)))
 
-         (println "Created new category:" category-name)
-         category-name))
-     (catch Exception e
-       (println "Error adding wave category:" (.getMessage e))
-       nil)))
+        (println "Created new category:" category-name)
+        category-name))
+    (catch Exception e
+      (println "Error adding wave category:" (.getMessage e))
+      nil)))
 
- (defn add-wave-signature
-   "Interactive command to add a new wave signature"
-   [board-shim]
-   (if-not board-shim
-     (println "No board connected. Please connect to a board first.")
-     (try
+(defn add-wave-signature
+  "Interactive command to add a new wave signature"
+  [board-shim]
+  (if-not board-shim
+    (println "No board connected. Please connect to a board first.")
+    (try
       ; First, select a category
-       (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
-             categories (list-wave-signature-categories)]
+      (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
+            categories (list-wave-signature-categories)]
 
-         (println "\nAvailable categories:")
-         (if (seq categories)
-           (do
-             (println (str "Found " (count categories) " lexicon categories:"))
-             (doseq [cat categories]
-               (println "  -" cat))
-             (doall (map-indexed #(println (str (inc %1) ". " %2)) categories)))
-           (println "No categories found."))
+        (println "\nAvailable categories:")
+        (if (seq categories)
+          (do
+            (println (str "Found " (count categories) " lexicon categories:"))
+            (doseq [cat categories]
+              (println "  -" cat))
+            (doall (map-indexed #(println (str (inc %1) ". " %2)) categories)))
+          (println "No categories found."))
 
-         (println (str (inc (count categories)) ". Create new category"))
+        (println (str (inc (count categories)) ". Create new category"))
 
-         (print "\nSelect category number or enter new category name: ")
-         (flush)
-         (let [input (read-line)
-               category (try
-                          (let [idx (Integer/parseInt input)]
-                            (if (<= idx (count categories))
-                              (nth categories (dec idx))
-                              nil))
-                          (catch Exception _ nil))
+        (print "\nSelect category number or enter new category name: ")
+        (flush)
+        (let [input (read-line)
+              category (try
+                         (let [idx (Integer/parseInt input)]
+                           (if (<= idx (count categories))
+                             (nth categories (dec idx))
+                             nil))
+                         (catch Exception _ nil))
 
               ; If input is a number and greater than categories count, create new category
-               category-name (cond
+              category-name (cond
                             ; Selected existing category
-                               category
-                               category
+                              category
+                              category
 
                             ; Create new category
-                               (and (re-matches #"\d+" input)
-                                    (= (Integer/parseInt input) (inc (count categories))))
-                               (add-wave-category)
+                              (and (re-matches #"\d+" input)
+                                   (= (Integer/parseInt input) (inc (count categories))))
+                              (add-wave-category)
 
                             ; Input is a new category name
-                               :else
-                               input)]
+                              :else
+                              input)]
 
-           (when-not (str/blank? category-name)
+          (when-not (str/blank? category-name)
             ; Now select or create a signature within that category
-             (let [signatures (list-only-signatures profile-name category-name)]
+            (let [signatures (list-only-signatures profile-name category-name)]
 
-               (println "\nAvailable signatures in category" category-name ":")
-               (if (seq signatures)
-                 (do
-                   (println (str "Found " (count signatures) " signatures:"))
-                   (doseq [sig signatures]
-                     (println "  -" sig))
-                   (doall (map-indexed #(println (str (inc %1) ". " %2)) signatures)))
-                 (println "No signatures found."))
+              (println "\nAvailable signatures in category" category-name ":")
+              (if (seq signatures)
+                (do
+                  (println (str "Found " (count signatures) " signatures:"))
+                  (doseq [sig signatures]
+                    (println "  -" sig))
+                  (doall (map-indexed #(println (str (inc %1) ". " %2)) signatures)))
+                (println "No signatures found."))
 
-               (println (str (inc (count signatures)) ". Create new signature"))
+              (println (str (inc (count signatures)) ". Create new signature"))
 
-               (print "\nSelect signature number or enter new signature name: ")
-               (flush)
-               (let [sig-input (read-line)
-                     signature (try
-                                 (let [idx (Integer/parseInt sig-input)]
-                                   (if (<= idx (count signatures))
-                                     (nth signatures (dec idx))
-                                     nil))
-                                 (catch Exception _ nil))
+              (print "\nSelect signature number or enter new signature name: ")
+              (flush)
+              (let [sig-input (read-line)
+                    signature (try
+                                (let [idx (Integer/parseInt sig-input)]
+                                  (if (<= idx (count signatures))
+                                    (nth signatures (dec idx))
+                                    nil))
+                                (catch Exception _ nil))
 
                       ; Determine signature name
-                     signature-name (cond
+                    signature-name (cond
                                    ; Selected existing signature
-                                      signature
-                                      signature
+                                     signature
+                                     signature
 
                                    ; Create new signature name
-                                      (and (re-matches #"\d+" sig-input)
-                                           (= (Integer/parseInt sig-input) (inc (count signatures))))
-                                      (do
-                                        (print "Enter new signature name: ")
-                                        (flush)
-                                        (read-line))
+                                     (and (re-matches #"\d+" sig-input)
+                                          (= (Integer/parseInt sig-input) (inc (count signatures))))
+                                     (do
+                                       (print "Enter new signature name: ")
+                                       (flush)
+                                       (read-line))
 
                                    ; Input is a new signature name
-                                      :else
-                                      sig-input)]
+                                     :else
+                                     sig-input)]
 
-                 (when-not (str/blank? signature-name)
+                (when-not (str/blank? signature-name)
                       ; Ask if this is practice or real
-                   (println "\nIs this a practice recording? (y/n)")
-                   (println "Practice recordings will be saved but won't affect your aggregated signature data.")
-                   (print "Enter choice (default: n): ")
-                   (flush)
-                   (let [practice? (= (str/lower-case (or (read-line) "n")) "y")
-                         include-in-aggregation (not practice?)]
+                  (println "\nIs this a practice recording? (y/n)")
+                  (println "Practice recordings will be saved but won't affect your aggregated signature data.")
+                  (print "Enter choice (default: n): ")
+                  (flush)
+                  (let [practice? (= (str/lower-case (or (read-line) "n")) "y")
+                        include-in-aggregation (not practice?)]
 
-              ;; Ready to record
-                     (println "\nStarting wave signature recording for:" category-name "/" signature-name)
-                     (if practice?
-                       (println "PRACTICE MODE: This recording will not be included in aggregation.")
-                       (println "RECORD MODE: This recording will be included in aggregation."))
-                     (println "Focus on the mental state you want to capture.")
-                     (println "Press any key when ready to start recording...")
-                     (read-line)
+                    (println "\nStarting wave signature recording for:" category-name "/" signature-name)
+                    (if practice?
+                      (println "PRACTICE MODE: This recording will not be included in aggregation.")
+                      (println "RECORD MODE: This recording will be included in aggregation."))
+                    (println "Focus on the mental state you want to capture.")
+                    (println "Press any key when ready to start recording...")
+                    (read-line)
 
-                     (let [context (start-wave-signature-recording!
-                                    category-name signature-name
-                                    :include-in-aggregation include-in-aggregation)]
-                       (if context
-                         (do
-                           (println "Recording started. Please focus...")
-                           (println "Recording will automatically stop after 5 seconds, or press any key to stop sooner...")
+                    (let [context (start-wave-signature-recording!
+                                   category-name signature-name
+                                   :include-in-aggregation include-in-aggregation)]
+                      (if context
+                        (do
+                          (println "Recording started. Please focus...")
+                          (println "Recording will automatically stop after 5 seconds, or press any key to stop sooner...")
 
                         ; Timed stop or manual stop, whichever comes first
-                           (let [start-time (System/currentTimeMillis)
-                                 future-stop (future
-                                               (Thread/sleep DEFAULT_RECORDING_DURATION)
-                                               (println "Automatic recording stop after 5 seconds")
-                                               (stop-wave-signature-recording! category-name signature-name))]
+                          (let [start-time (System/currentTimeMillis)
+                                future-stop (future
+                                              (Thread/sleep DEFAULT_RECORDING_DURATION)
+                                              (println "Automatic recording stop after 5 seconds")
+                                              (stop-wave-signature-recording! category-name signature-name))]
 
                           ; Wait for user input
-                             (read-line)
+                            (read-line)
 
                           ; Cancel the automatic stop if user pressed key
-                             (future-cancel future-stop)
+                            (future-cancel future-stop)
 
                           ; Stop recording if not already stopped
-                             (when @state/recording?
-                               (println "Manual recording stop")
-                               (stop-wave-signature-recording! category-name signature-name))
+                            (when @state/recording?
+                              (println "Manual recording stop")
+                              (stop-wave-signature-recording! category-name signature-name))
 
-                             (println "Wave signature recorded and saved successfully.")))
-                         (println "Failed to start recording. Check your device connection."))))))))))
-   (catch Exception e
-     (println "Error in add-wave-signature:" (.getMessage e))
-     (.printStackTrace e)))))
+                            (println "Wave signature recorded and saved successfully.")))
+                        (println "Failed to start recording. Check your device connection."))))))))))
+      (catch Exception e
+        (println "Error in add-wave-signature:" (.getMessage e))
+        (.printStackTrace e)))))
 
 (defn load-category-template
   "Load a category template for matching"
@@ -1181,95 +1315,6 @@ _ (println "features" features)
       (.printStackTrace e)
       nil)))
 
-
-(defn train-model
-  "Train a model using collected wave signatures"
-  []
-  (try
-    (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
-          categories (list-wave-signature-categories)]
-
-      (if (empty? categories)
-        (println "No wave signature categories found. Please add signatures first.")
-
-        (do
-          (println "Training model using the following categories:")
-          (doseq [category categories]
-            (let [stats (category/get-category-stats profile-name category)]
-              (println (format "  - %s (%d signatures%s)"
-                               category
-                               (:signature-count stats)
-                               (if (:has-template stats) ", has template" "")))))
-
-          ; Here we would implement actual model training
-          ; For now, we'll just update all the category templates
-          (doseq [category categories]
-            (println "\nUpdating template for category:" category)
-
-            (let [dir (fio/get-wave-lexicon-dir profile-name category)
-                  signatures (when (.exists (io/file dir))
-                               (->> (.listFiles (io/file dir))
-                                    (filter #(.isDirectory %))
-                                    (filter #(not= (.getName %) "category_template.edn"))))
-
-                  ; Collect and combine all signatures
-                  combined-features (atom nil)]
-
-              ; Process each signature
-              (doseq [sig-dir signatures]
-                (let [feature-file (io/file (str (.getPath sig-dir) "/signature_features.edn"))]
-                  (when (.exists feature-file)
-                    (let [features (edn/read-string (slurp feature-file))
-                          template (create-signature-template features)]
-
-                      ; Combine with existing data
-                      (if @combined-features
-                        ; Update combined features with this signature
-                        (reset! combined-features
-                                (merge-with (fn [a b]
-                                              (cond
-                                                (and (map? a) (map? b))
-                                                (merge-with + a b)
-
-                                                (and (vector? a) (vector? b))
-                                                (mapv (fn [x y]
-                                                        (if (map? x)
-                                                          (merge-with + x y)
-                                                          (+ x y)))
-                                                      a b)
-
-                                                :else (+ a b)))
-                                            @combined-features
-                                            template))
-                        ; First signature becomes the base
-                        (reset! combined-features template))))))
-
-              ; If we have combined data, create a normalized template
-              (when @combined-features
-                (let [sig-count (count signatures)]
-                  (when (pos? sig-count)
-                    ; Normalize values
-                    (let [normalized (clojure.walk/postwalk
-                                      (fn [x]
-                                        (if (number? x)
-                                          (/ x sig-count)
-                                          x))
-                                      @combined-features)
-
-                          ;; Add metadata
-                          final-template (assoc normalized
-                                                :instance-count sig-count
-                                                :last-updated (java.util.Date.)
-                                                :category category)]
-
-                      ; Save the updated template
-                      (spit (str dir "/category_template.edn") (pr-str final-template))
-                      (println "  Updated template with" sig-count "signatures")))))))
-          (println "\nModel training complete!"))))
-    (catch Exception e
-      (println "Error training model:" (.getMessage e))
-      (.printStackTrace e))))
-
 (defn initialize-lexicon! []
   (state/register-fn! :start-wave-signature-recording!  start-wave-signature-recording!)
   (state/register-fn! :stop-wave-signature-recording!   stop-wave-signature-recording!)
@@ -1280,4 +1325,4 @@ _ (println "features" features)
   (state/register-fn! :match-live-activity              match-live-activity)
   (state/register-fn! :get-category-stats               category/get-category-stats)
   (state/register-fn! :add-wave-signature               add-wave-signature)
-  (state/register-fn! :train-model                      train-model))
+  (state/register-fn! :fill-initial-lexicon!            fill-initial-lexicon!))

@@ -27,9 +27,9 @@
                               :refraction-mirrors {}}))
 
 (def calibration-script
-  [{:label :rest    :duration-ms 3000 :instruction "Please relax... recording resting state."}
+  [{:label :rest    :duration-ms 30000 :instruction "Please relax... recording resting state."}
    {:label :active  :duration-ms 3000 :instruction "Please move your eyes up and down (no head movement)."}
-   {:label :imagery :duration-ms 3000 :instruction "Now, imagine the same movement (up/down) without doing it."}])
+   {:label :imagery :duration-ms 5000 :instruction "Now, imagine the same movement (up/down) without doing it."}])
 
 (defn read-lor-file
   "Read a .lor file and return the data along with header info"
@@ -976,7 +976,6 @@
           (let [calibration-data (run-calibration!)]
             (println "Checking calibration data...")
             (println "Found data segments for:" (keys calibration-data))
-
             (if (and (seq calibration-data)
                      (every? #(seq (get calibration-data %)) [:rest :active :imagery]))
               (let [golden-tensor (generate-golden-tensor calibration-data)]
@@ -984,6 +983,11 @@
                   (do
                     (println "Calibration successful! Generated baseline tensor.")
                     (save-tensor-to-profile! golden-tensor)
+                    ; Reload the profile after saving golden tensor
+                    (let [profile-name (:name active-profile)]
+                      (println "Reloading profile to update in-memory state...")
+                      (profiles/set-active-profile! profile-name)
+                      (println "Profile reloaded with updated golden tensor"))
                     (println "Your BCI is now calibrated for optimal performance."))
                   (println "Failed to generate golden tensor from calibration data.")))
               (println "Insufficient calibration data collected. Please try again.")))
