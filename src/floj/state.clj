@@ -44,6 +44,14 @@
                       :list-wave-signatures nil
                       :train-model nil
 
+                      :digital-twin {:frames []
+                                     :current-tensor nil
+                                     :frame-buffer-size 256
+                                     :tensor-update-counter 0
+                                     :comparison-metrics {}
+                                     :streaming-enabled false
+                                     :last-update-time 0}
+
                       :release-board! nil}))
 
 (defn register-fn! [key f]

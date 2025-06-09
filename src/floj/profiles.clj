@@ -9,7 +9,7 @@
 (defn get-profiles-dir
   "Get the base directory containing all profiles"
   []
-  (str (fio/config-base-dir) "/profiles"))
+  (str (fio/config-base-dir) "/profiles/"))
 
 (defn list-profiles
   "List all available profile names (directories under profiles/)"
@@ -25,14 +25,14 @@
 (defn get-profile-history-dir
   "Get the directory for storing profile history"
   [profile-name]
-  (let [base (fio/config-base-dir)]
-    (str base "/profiles/" profile-name "/history")))
+  (let [base (get-profiles-dir)]
+    (str base profile-name "/history")))
 
 (defn get-profile-history-path
   "Get the path for storing profile history"
   [profile-name timestamp]
-  (let [base (fio/config-base-dir)]
-    (str base "/profiles/" profile-name "/history/" profile-name "_" timestamp ".edn")))
+  (let [base (get-profiles-dir)]
+    (str base profile-name "/history/" profile-name "_" timestamp ".edn")))
 
 (defn get-latest-profile-path
   "Get the path for the most recent profile file in history"
@@ -60,7 +60,7 @@
   []
   (let [profile-name "default"
         timestamp (System/currentTimeMillis)
-        existing-active-profile (:get-active-profile @state/state) ;; Adjust depending on how you track this
+        existing-active-profile (:get-active-profile @state/state)
         history-dir (get-profile-history-dir profile-name)
         existing-history-files (seq (filter #(clojure.string/ends-with? (.getName %) ".edn")
                                             (file-seq (io/file history-dir))))]

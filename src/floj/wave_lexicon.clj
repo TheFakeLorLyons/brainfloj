@@ -573,17 +573,17 @@
   (try
     (println "Extracting signature features from" (count eeg-data) "EEG samples")
 
-     ; Extract the EEG matrix: [{:eeg [[samples]], :timestamp}] -> [[channels][samples]]
+    ; Extract the EEG matrix: [{:eeg [[samples]], :timestamp}] -> [[channels][samples]]
     (let [raw-eeg-matrix (mapcat :eeg eeg-data)
-           ; Remove timestamps: [timestamp ch1 ch2 ch3 ch4] -> [ch1 ch2 ch3 ch4]
+          ; Remove timestamps: [timestamp ch1 ch2 ch3 ch4] -> [ch1 ch2 ch3 ch4]
           without-timestamps (mapv rest raw-eeg-matrix)
-           ; Convert to [channels][samples] format
+          ; Convert to [channels][samples] format
           channels-samples (apply mapv vector without-timestamps)
 
-           ; Extract FRESH band powers from the actual signature data
+          ; Extract FRESH band powers from the actual signature data
           signature-band-powers (calibrate/extract-band-powers channels-samples sampling-rate)
 
-           ; Calculate signature-specific statistics
+          ; Calculate signature-specific statistics
           channel-stats (for [channel channels-samples]
                           (let [mean (/ (reduce + channel) (count channel))
                                 variance (/ (reduce + (map #(Math/pow (- % mean) 2) channel))
@@ -591,12 +591,12 @@
                                 std-dev (Math/sqrt variance)]
                             {:mean mean :std-dev std-dev :variance variance}))
 
-           ; Calculate power distribution (what makes this signature unique)
+          ; Calculate power distribution (what makes this signature unique)
           total-power (reduce + (vals signature-band-powers))
           power-distribution (into {} (for [[band power] signature-band-powers]
                                         [band (/ power total-power)]))
 
-           ; Signature strength (how distinct this pattern is)
+          ; Signature strength (how distinct this pattern is)
           signature-strength (let [powers (vals signature-band-powers)
                                    max-power (apply max powers)
                                    min-power (apply min powers)]
@@ -767,7 +767,7 @@
   (try
     (let [context @state/recording-context]
 
-          ; Add end tag
+      ; Add end tag
       (let [timestamp (System/currentTimeMillis)
             _ (println "Category " category)]
         (swap! state/tags conj {:timestamp timestamp
@@ -793,15 +793,14 @@
         (spit (str category-recording-dir "/recording_metadata.edn")
               (pr-str signature-metadata))
 
-              ; Save tags separately for easy access
+        ; Save tags separately for easy access
         (spit (str category-recording-dir "/tags.edn")
               (pr-str @state/tags))
 
-        (println "Count of samples " (count eeg-data))
-              ; Process the signature features if we have enough data
+        ; Process the signature features if we have enough data
         (if (>= (count eeg-data) MIN_SAMPLES_FOR_SIGNATURE)
           (do
-            (process-wave-signature! eeg-data category-recording-dir signature-metadata)
+            (process-wave-signature! category-recording-dir signature-metadata)
             (println "Successfully processed category recording for category: " category)
 
             category-recording-dir)
@@ -810,13 +809,13 @@
                      MIN_SAMPLES_FOR_SIGNATURE)
             nil))))
 
-    ;; Ensure recording is stopped in all cases
+    ; Ensure recording is stopped in all cases
     (when @state/recording?
       (record/stop-recording!))
     (catch Exception e
       (println "Error stopping category recording:" (.getMessage e))
       (.printStackTrace e)
-      ;; Ensure recording is stopped even on error
+      ; Ensure recording is stopped even on error
       (when @state/recording?
         (record/stop-recording!))))
   nil)
@@ -878,16 +877,16 @@
 
               ; If input is a number and greater than categories count, create new category
               category-name (cond
-                            ; Selected existing category
+                              ; Selected existing category
                               category
                               category
 
-                            ; Create new category
+                              ; Create new category
                               (and (re-matches #"\d+" input)
                                    (= (Integer/parseInt input) (inc (count categories))))
                               (add-wave-category)
 
-                            ; Input is a new category name
+                              ; Input is a new category name
                               :else
                               input)]
 
@@ -916,13 +915,13 @@
                                     nil))
                                 (catch Exception _ nil))
 
-                      ; Determine signature name
+                    ; Determine signature name
                     signature-name (cond
-                                   ; Selected existing signature
+                                     ; Selected existing signature
                                      signature
                                      signature
 
-                                   ; Create new signature name
+                                     ; Create new signature name
                                      (and (re-matches #"\d+" sig-input)
                                           (= (Integer/parseInt sig-input) (inc (count signatures))))
                                      (do
@@ -930,12 +929,12 @@
                                        (flush)
                                        (read-line))
 
-                                   ; Input is a new signature name
+                                     ; Input is a new signature name
                                      :else
                                      sig-input)]
 
                 (when-not (str/blank? signature-name)
-                      ; Ask if this is practice or real
+                  ; Ask if this is practice or real
                   (println "\nIs this a practice recording? (y/n)")
                   (println "Practice recordings will be saved but won't affect your aggregated signature data.")
                   (print "Enter choice (default: n): ")
@@ -959,20 +958,20 @@
                           (println "Recording started. Please focus...")
                           (println "Recording will automatically stop after 5 seconds, or press any key to stop sooner...")
 
-                        ; Timed stop or manual stop, whichever comes first
+                          ; Timed stop or manual stop, whichever comes first
                           (let [start-time (System/currentTimeMillis)
                                 future-stop (future
                                               (Thread/sleep DEFAULT_RECORDING_DURATION)
                                               (println "Automatic recording stop after 5 seconds")
                                               (stop-wave-signature-recording! category-name signature-name))]
 
-                          ; Wait for user input
+                            ; Wait for user input
                             (read-line)
 
-                          ; Cancel the automatic stop if user pressed key
+                            ; Cancel the automatic stop if user pressed key
                             (future-cancel future-stop)
 
-                          ; Stop recording if not already stopped
+                            ; Stop recording if not already stopped
                             (when @state/recording?
                               (println "Manual recording stop")
                               (stop-wave-signature-recording! category-name signature-name))
@@ -1008,12 +1007,12 @@
                                                               (:mean template-chan)))
                                        std-diff (Math/abs (- (:std-dev current-chan)
                                                              (:std-dev template-chan)))
-                                      ; Normalize differences
+                                       ; Normalize differences
                                        mean-sim (/ 1.0 (+ 1.0 mean-diff))
                                        std-sim (/ 1.0 (+ 1.0 std-diff))]
-                                  ; Average for this channel
+                                   ; Average for this channel
                                    (/ (+ mean-sim std-sim) 2.0)))
-          ;; Average across channels
+          ; Average across channels
           overall-similarity (if (pos? CURRENT_CHANNEL_COUNT)
                                (/ (reduce + channel-similarities) CURRENT_CHANNEL_COUNT)
                                0.5)]

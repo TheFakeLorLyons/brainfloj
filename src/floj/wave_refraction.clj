@@ -306,7 +306,7 @@
 
 (defn create-golden-tensor
   "Create a multidimensional tensor representation of EEG baseline data
-   Incorporates spectral, wavelet, and correlation properties with robust data cleaning"
+   Incorporates spectral, wavelet, and correlation properties"
   [segment-data]
   (let [first-sample-numbers (extract-numbers (first segment-data))
         desired-channel-count (min 4 (count first-sample-numbers))
