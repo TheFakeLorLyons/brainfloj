@@ -398,17 +398,17 @@
 
            :triangulated-strength
            (when (seq triangulated-strengths)
-             (let [#_#_live-intensities (keep :live-intensity triangulated-strengths)
+             (let [live-intensities (keep :live-intensity triangulated-strengths)
                    vs-golden-tensor (keep :vs-golden-tensor triangulated-strengths)
                    vs-calibration (keep :vs-calibration triangulated-strengths)
                    vs-signature (keep :vs-signature triangulated-strengths)]
                {:live-intensity {:average (when (seq live-intensities) (/ (reduce + live-intensities) (count live-intensities)))
-                                     #_#_:std-dev (when (seq live-intensities)
-                                                (let [avg (/ (reduce + live-intensities) (count live-intensities))
-                                                      variance (/ (reduce + (map #(* (- % avg) (- % avg)) live-intensities)) (count live-intensities))]
-                                                  (Math/sqrt variance)))}
+                                 :std-dev (when (seq live-intensities)
+                                            (let [avg (/ (reduce + live-intensities) (count live-intensities))
+                                                  variance (/ (reduce + (map #(* (- % avg) (- % avg)) live-intensities)) (count live-intensities))]
+                                              (Math/sqrt variance)))}
                 :vs-golden-tensor {:average (when (seq vs-golden-tensor) (/ (reduce + vs-golden-tensor) (count vs-golden-tensor)))
-                                   #_#_:std-dev (when (seq vs-golden-tensor)
+                                   :std-dev (when (seq vs-golden-tensor)
                                               (let [avg (/ (reduce + vs-golden-tensor) (count vs-golden-tensor))
                                                     variance (/ (reduce + (map #(* (- % avg) (- % avg)) vs-golden-tensor)) (count vs-golden-tensor))]
                                                 (Math/sqrt variance)))}

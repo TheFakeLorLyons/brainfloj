@@ -193,6 +193,61 @@
         (println))
       (println "\nNo wave signature categories found."))))
 
+(defn load-category
+  "Load the comprehensive category.edn file"
+  [category]
+  (try
+    (let [profile-name (:name ((:get-active-profile @state/state)))
+          category-path (str (System/getProperty "user.home")
+                             "/.lor/profiles/" profile-name
+                             "/wave_lexicon/" category "/category.edn")]
+      (when (.exists (io/file category-path))
+        (edn/read-string (slurp category-path))))
+    (catch Exception e
+      (println "Error loading category intelligence:" (.getMessage e))
+      nil)))
+
+(defn load-category-summary
+  "Load category data from category.edn for assistance calculation"
+  [category]
+  (try
+    (let [profile-name (:name ((:get-active-profile @state/state)))
+          lexicon-path  (fio/get-wave-lexicon-dir profile-name "")
+          category-dir (str lexicon-path "/" category)
+          category-path (str category-dir "/category.edn")
+          category-data (when (.exists (java.io.File. category-path))
+                          (read-string (slurp category-path)))]
+      (when category-data
+        (println "Found signature data structure:")
+        (println "  Summary keys:" (keys (:summary category-data)))
+        (when (get-in category-data [:summary :all])
+          (println "  All keys:" (keys (get-in category-data [:summary :all]))))
+        category-data))
+    (catch Exception e
+      (println "Error loading category data:" (.getMessage e))
+      nil)))
+
+(defn load-signature-data
+  "Load category data from category.edn for assistance calculation"
+  [category signature]
+  (try
+    (let [profile-name (:name ((:get-active-profile @state/state)))
+          lexicon-path  (fio/get-wave-lexicon-dir profile-name "")
+          category-dir (str lexicon-path "/" category)
+          signature-dir (str category-dir "/" signature)
+          signature-path (str signature-dir "/signature.edn")
+          signature-data (when (.exists (java.io.File. signature-path))
+                           (read-string (slurp signature-path)))]
+      (when signature-data
+        (println "Found signature data structure:")
+        (println "  Summary keys:" (keys (:summary signature-data)))
+        (when (get-in signature-data [:summary :all])
+          (println "  All keys:" (keys signature-data)))
+        signature-data))
+    (catch Exception e
+      (println "Error loading category data:" (.getMessage e))
+      nil)))
+
 (defn save-wave-lexicon-entry!
   "Save a wave lexicon entry for a specific category"
   [profile-name category entry]
@@ -432,14 +487,14 @@
                              "/" signature-name)
           recording-info {:recording-type signature-name
                           :path recording-dir}]
-      
+
       ; Start recording using existing infrastructure
       (record/start-recording! recording-info)
-      
+
       ; Fresh calibration update immediately for wave signatures
       (println "Forcing fresh calibration for wave signature...")
       (reset! record/last-calibration-update 0) ; Reset to force immediate update
-      
+
       ; Enhance recording context with wave signature data
       (swap! state/recording-context merge
              {:wave-signature-metadata {:category (name category)
@@ -447,7 +502,7 @@
                                         :is-wave-signature true
                                         :include-in-aggregration include-in-aggregation
                                         :wave-signature-timestamp (System/currentTimeMillis)}})
-      
+
       ; Update the main metadata in recording context
       (swap! state/recording-context update-in [:metadata] merge
              {:category (name category)
@@ -455,21 +510,21 @@
               :is-wave-signature true
               :include-in-aggregation include-in-aggregation
               :force-fresh-calibration true}) ; Flag to ensure fresh calibration
-      
+
       ; Add start tag
       (let [start-time (System/currentTimeMillis)]
         (swap! state/tags conj {:timestamp start-time
                                 :label (str "WAVE_SIGNATURE_START:"
                                             (name category) "/" (name signature-name))}))
-      
+
       (println "Started wave signature recording for" category "/" signature-name
                (if include-in-aggregation "" "(practice mode - will not be aggregated)"))
-      
+
       ; Wait a moment then force calibration update
       (future
         (Thread/sleep 1000) ; Give it a second to collect some data
         (record/update-calibration-if-needed!))
-      
+
       @state/recording-context)
     (catch Exception e
       (println "Error starting wave signature recording:" (.getMessage e))
