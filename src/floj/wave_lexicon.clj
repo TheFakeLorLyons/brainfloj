@@ -762,7 +762,7 @@
   [category signature]
   (try
     (let [context @state/recording-context]
-      ;; Add end tag
+      ; Add end tag
       (let [timestamp (System/currentTimeMillis)]
         (swap! state/tags conj {:timestamp timestamp
                                 :label (str "WAVE_SIGNATURE_END:"

@@ -36,7 +36,7 @@
             :active-profile nil
             :match-interval nil
             :confidence {:up 0.0 :down 0.0}
-            :threshold 0.6   ; Default confidence threshold
+            :threshold 0.05   ; Default confidence threshold
             :sensitivity 0.5 ; Default movement sensitivity
             :recording? false
             :current-category nil
@@ -300,7 +300,7 @@
     (let [bci-confidence (get-in @state [:bci :confidence])
           up-confidence (:up bci-confidence)
           down-confidence (:down bci-confidence)
-          threshold 0.6]
+          threshold 0.05]
       (cond
         (> up-confidence threshold) (move-paddle! :up)
         (> down-confidence threshold) (move-paddle! :down)))))
@@ -437,7 +437,7 @@
 ; experimental
 
 (def paddle-speed 10)
-(def paddle-threshold 0.6) ; Confidence threshold for BCI movement
+(def paddle-threshold 0.05) ; Confidence threshold for BCI movement
 
 (defn brain-move-paddle!
   "Move the player paddle in the specified direction"

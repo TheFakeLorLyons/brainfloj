@@ -4,6 +4,7 @@
    [hyperfiddle.electric-dom3 :as dom]
    [brain-pong.game-state :as pong-state]
    [brain-pong.bci-integration :as bci]
+   [brain-pong.training-wheels :as wheels]
    #?(:clj [floj.profiles :as profiles])
    #?(:clj [brain-pong.signature :as signature])))
 
@@ -20,7 +21,7 @@
      (dom/div
       (dom/props {:class "bci-status"})
 
-      ;; Connection status
+      ; Connection status
       (dom/div
        (dom/props {:class (str "status-indicator " (if connected? "connected" "disconnected"))})
        (dom/span (dom/props {:class "status-dot"}) (dom/text ""))
@@ -76,10 +77,11 @@
    (let [state (e/watch pong-state/state)]
      (when (get-in state [:bci :pending-disconnect])
        (js/console.log "Initiating BCI disconnection")
+
        ; Clear the pending state first
        (swap! pong-state/state assoc-in [:bci :pending-disconnect] false)
+       
        ; Call the disconnection function
-
        (let [result (e/server (bci/disconnect-device-server))]
          (js/console.log "Disconnect result:" (clj->js result))
          (swap! pong-state/state update-in [:bci] merge
@@ -87,6 +89,7 @@
                  :active-profile nil
                  :matching? false
                  :connection-error nil})
+         
            ; Clear any running intervals
          (when-let [interval (get-in @pong-state/state [:bci :match-interval])]
            (js/clearInterval interval)
@@ -130,8 +133,6 @@
               {:streaming? false
                :matching? false})))))
 
-; Separate component for brain activity polling with interval-based approach
-
 (e/defn BrainActivityPoller []
   (e/client
    (let [state (e/watch pong-state/state)
@@ -139,49 +140,87 @@
          matching? (get-in state [:bci :matching?])
          streaming? (get-in state [:bci :streaming?])
          should-poll? (and connected? streaming? matching?)
-         current-interval (get-in state [:bci :poll-interval])
-         poll-trigger (get-in state [:bci :poll-trigger])
-         last-poll-time (get-in state [:bci :last-poll-time])]
-     
-     ;; Start interval when conditions are met and no interval exists
+         profile-name (or (get-in state [:bci :user-profile :name]) "default")
+         poll-interval-atom (atom nil)
+         current-interval (e/watch poll-interval-atom)]
+
+     ; Cleanup on unmount
+     (e/on-unmount
+      #(when current-interval
+         (js/clearInterval current-interval)
+         (reset! poll-interval-atom nil)))
+
+     ; Start polling when conditions are met
      (when (and should-poll? (not current-interval))
-       (js/console.log "Starting BCI polling interval...")
-       (let [base-interval 1000  ;; Increased from 500ms to 1000ms
+       (js/console.log "Starting BCI polling...")
+       (let [base-interval 500
              interval-id (js/setInterval
                           (fn []
-                            (let [current-time (js/Date.now)
-                                  time-since-last (- current-time (or last-poll-time 0))]
-                              ;; Only poll if enough time has passed (prevent too frequent polling)
-                              (when (> time-since-last (+ base-interval (rand-int 200))) ;; Add 0-200ms jitter
-                                (js/console.log "Interval tick - updating poll trigger...")
-                                (swap! pong-state/state update-in [:bci :poll-trigger] (fnil inc 0))
-                                (swap! pong-state/state assoc-in [:bci :last-poll-time] current-time))))
+                            (let [current-time (js/Date.now)]
+                              (swap! pong-state/state update-in [:bci :poll-trigger] (fnil inc 0))
+                              (swap! pong-state/state assoc-in [:bci :last-poll-time] current-time)))
                           base-interval)]
-         (swap! pong-state/state assoc-in [:bci :poll-interval] interval-id)))
-     
-     ;; Stop interval when conditions are no longer met
+         (reset! poll-interval-atom interval-id)))
+
+     ; Stop polling when conditions are no longer met
      (when (and (not should-poll?) current-interval)
-       (js/console.log "Stopping BCI polling interval...")
+       (js/console.log "Stopping BCI polling...")
        (js/clearInterval current-interval)
-       (swap! pong-state/state assoc-in [:bci :poll-interval] nil))
-     
-     ;; React to poll triggers and make server calls
-     (when (and should-poll? poll-trigger)
-       (js/console.log "Poll trigger fired, calling server..." poll-trigger)
-       (let [confidence-data (e/server
-                              (e/Offload
-                               (fn []
-                                 (println "Server: Fresh call #" poll-trigger "at" (System/currentTimeMillis))
-                                 (signature/match-brain-activity))))]
-         (js/console.log "Server response:" (clj->js confidence-data))
-         (when confidence-data
-           ;; Add confidence change detection to reduce repetition
-           (let [current-confidence (get-in @pong-state/state [:bci :confidence])
-                 confidence-changed? (or (nil? current-confidence)
-                                       (> (Math/abs (- (:up confidence-data) (:up current-confidence))) 0.01)
-                                       (> (Math/abs (- (:down confidence-data) (:down current-confidence))) 0.01))]
-             (when confidence-changed?
-               (swap! pong-state/state assoc-in [:bci :confidence] confidence-data)))))))))
+       (reset! poll-interval-atom nil))
+
+     ; Polling logic that handles both basic matching AND training
+     (when should-poll?
+       (let [poll-trigger (get-in state [:bci :poll-trigger])]
+         (when poll-trigger
+           (let [recent-performance (bci/calculate-recent-performance state)
+                 game-context {:ball-position-validates-intent
+                               (let [ball (get-in state [:game :ball])
+                                     paddle (get-in state [:game :player-paddle])]
+                                 (and ball paddle
+                                      (< (Math/abs (- (:x ball) (:x paddle))) 200)))
+                               :game-active (get-in state [:game :playing?])
+                               :timestamp (js/Date.now)}
+
+                 unified-response (e/server
+                                   (e/Offload
+                                    (fn []
+                                      ;(println "Server: Processing brain activity #" poll-trigger)
+                                      (bci/enhanced-brain-activity-response-server
+                                       profile-name "pong" game-context recent-performance))))]
+
+             (js/console.log "Server response:" (clj->js unified-response))
+
+             (when unified-response
+              ; Update confidence structure to include all server data
+               (when (and (:up unified-response) (:down unified-response))
+                 (let [current-threshold (get-in @pong-state/state [:bci :confidence :dynamic-threshold] 0.05)]
+                   (swap! pong-state/state assoc-in [:bci :confidence]
+                          {:up (:up unified-response)
+                           :down (:down unified-response)
+                           :confidence (:confidence unified-response) ; FIXED: Use :confidence not :overall
+                           :dynamic-threshold (or (:dynamic-threshold unified-response) current-threshold)
+                           :confidence-gap (:confidence-gap unified-response)
+                           :intelligence-grade (:intelligence-grade unified-response)
+                           :separation-score (:separation-score unified-response)
+                           :triangulation-quality (:triangulation-quality unified-response)})))
+
+               ; Store training assistance for game loop
+               (when (:training-assistance unified-response)
+                 (swap! pong-state/state assoc-in [:bci :training-assistance]
+                        (:training-assistance unified-response)))
+
+               ; Track enhancements
+               (when (:signature-enhanced unified-response)
+                 (swap! pong-state/state update-in [:bci :enhancement-count] (fnil inc 0)))
+
+               ; Update base threshold periodically (every 10 cycles)
+               (when (= 0 (mod poll-trigger 10))
+                 (js/console.log "Updating base threshold from server...")
+                 (let [server-threshold (e/server (wheels/Get-adaptive-threshold "pong"))]
+                   (js/console.log "New server base threshold:" server-threshold)
+                   (swap! pong-state/state assoc-in [:bci :confidence :dynamic-threshold] server-threshold)
+                   (swap! pong-state/state assoc-in [:bci :server-base-threshold] server-threshold)))))))
+       nil))))
 
 (e/defn BrainControls []
   (e/client
@@ -279,7 +318,7 @@
 (e/defn ThresholdAdjustment []
   (e/client
    (let [state (e/watch pong-state/state)
-         threshold (get-in state [:bci :threshold] 0.6)
+         threshold (get-in state [:bci :threshold] 0.05)
          sensitivity (get-in state [:bci :sensitivity] 0.5)]
      (dom/div
       (dom/props {:class "threshold-adjustment"})
@@ -300,7 +339,7 @@
                             (swap! pong-state/state assoc-in [:bci :threshold] value)))
                 nil)))
 
-        ; Sensitivity slider
+      ; Sensitivity slider
       (dom/div
        (dom/props {:class "slider-group"})
        (dom/label (dom/text (str "Sensitivity: " (.toFixed sensitivity 2))))
@@ -315,61 +354,6 @@
                             (swap! pong-state/state assoc-in [:bci :sensitivity] value)))
                 nil)))))))
 
-#_(e/defn CalibrationControl []
-    (e/client
-     (let [state (e/watch pong-state/state)
-           connected? (get-in state [:bci :device-connected?])
-           recording? (get-in state [:bci :recording?])
-           current-category (get-in state [:bci :current-category])
-           matching? (get-in state [:bci :matching?])]
-       (dom/div
-        (dom/props {:class "calibration-controls"})
-        (dom/h3 (dom/text "Brain Calibration"))
-
-      ; Calibration instructions
-        (dom/div
-         (dom/props {:class "calibration-instructions"})
-         (dom/text "Record your brain patterns while thinking about moving the paddle up or down."))
-
-      ; "Up" recording button
-        (dom/div
-         (dom/props {:class "recording-button-group"})
-         (dom/button
-          (dom/props {:class (str "recording-button up-button"
-                                  (when (and recording? (= current-category "up")) " active"))
-                      :disabled (or (not connected?) (and recording? (not= current-category "up")))})
-          (dom/text (if (and recording? (= current-category "up")) "Stop Recording Up" "Record Up"))
-          (dom/On "click" (fn [_]
-                            (if (and recording? (= current-category "up"))
-                              (bci/stop-recording!)
-                              (bci/start-recording! "up")))
-                  nil))
-
-       ; "Down" recording button  
-         (dom/button
-          (dom/props {:class (str "recording-button down-button"
-                                  (when (and recording? (= current-category "down")) " active"))
-                      :disabled (or (not connected?) (and recording? (not= current-category "down")))})
-          (dom/text (if (and recording? (= current-category "down")) "Stop Recording Down" "Record Down"))
-          (dom/On "click" (fn [_]
-                            (if (and recording? (= current-category "down"))
-                              (bci/stop-recording!)
-                              (bci/start-recording! "down")))
-                  nil)))
-
-      ; Start/Stop brain activity matching
-        (dom/div
-         (dom/props {:class "matching-controls"})
-         (dom/button
-          (dom/props {:class (str "matching-button" (when matching? " active"))
-                      :disabled (not connected?)})
-          (dom/text (if matching? "Stop Brain Control" "Start Brain Control"))
-          (dom/On "click" (fn [_]
-                            (if matching?
-                              (bci/stop-activity-matching!)
-                              (bci/start-activity-matching!)))
-                  nil)))))))
-
 (e/defn BCIPanel []
   (e/client
    (dom/div
@@ -377,7 +361,6 @@
     (dom/h2 (dom/text "Brain-Computer Interface"))
     (BrainConnectionStatus)
     (BrainControls)
-    #_(CalibrationControl)
     #_(ThresholdAdjustment))))
 
 (e/defn BrainSignalVisualization []
@@ -599,42 +582,4 @@
          (dom/pre
           (dom/text (str "Playing: " (get-in state [:game :playing?])
                          #_#_"\nScore - Player: " (get-in state [:game :score :player])
-                         #_#_"\nScore - AI: " (get-in state [:game :score :ai])))))
-
-        ; Brain Signal Visualization
-        #_(BrainSignalVisualization))))))
-
-#_(e/defn StateDebugging []
-    (e/client
-     (let [state (e/watch pong-state/state)
-           playing? (get-in state [:game :playing?])]
-       (dom/div
-        (dom/props {:class "state-debugging"
-                    :style {:position "fixed"
-                            :top "10px"
-                            :right "10px"
-                            :background "rgba(255,0,0,0.7)"
-                            :color "white"
-                            :padding "10px"
-                            :border-radius "5px"
-                            :font-family "monospace"
-                            :z-index "2000"}})
-        (dom/h4 (dom/text "State Debugging"))
-        (dom/div (dom/text (str "Playing? " playing?)))
-        (dom/div (dom/text (str "Keys: " (pr-str (:keys-pressed state)))))
-        (dom/button
-         (dom/props {:style {:margin-top "10px"
-                             :padding "5px"
-                             :background "#4CAF50"
-                             :color "white"
-                             :border "none"
-                             :cursor "pointer"}})
-         (dom/text "Force Start")
-         (dom/On "click" (fn [_]
-                           (js/console.log "Force starting game...")
-                           (pong-state/reset-game!)
-                           (pong-state/init-keyboard-controls!)
-                           (swap! pong-state/state assoc-in [:game :playing?] true)
-                           (js/console.log "Forced game start, state:"
-                                           (pr-str (get-in @pong-state/state [:game :playing?]))))
-                 nil))))))
+                         #_#_"\nScore - AI: " (get-in state [:game :score :ai]))))))))))

@@ -410,6 +410,7 @@ body {
   width: 100%;
   height: 8px;
   border-radius: 4px;
+  appearance: none;
   -webkit-appearance: none;
   background: #e0e0e0;
 }
@@ -422,3 +423,46 @@ body {
   background: #2196F3;
   cursor: pointer;
 }
+
+
+
+
+
+
+.assistance-display {
+   background: #f0f8ff;
+   border: 2px solid #4CAF50;
+   border-radius: 8px;
+   padding: 12px;
+   margin: 10px 0;
+   font-family: 'Courier New', monospace;
+ }
+ 
+ .assistance-level {
+   font-size: 16px;
+   font-weight: bold;
+   color: #2196F3;
+   margin-bottom: 8px;
+ }
+ 
+ .game-stats {
+   font-size: 12px;
+   color: #666;
+ }
+ 
+ .game-stats div {
+   margin: 2px 0;
+ }
+ 
+ .assistance-controls {
+   margin: 10px 0;
+   padding: 8px;
+   background: #f5f5f5;
+   border-radius: 4px;
+ }
+ 
+ .assistance-controls label {
+   display: flex;
+   align-items: center;
+   gap: 8px;
+ }
