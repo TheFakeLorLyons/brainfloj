@@ -1,4 +1,5 @@
 (ns floj.keybindings
+  "Default keybindings for the CLI and building towards custom keybindings in the future."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [floj.api :as api]

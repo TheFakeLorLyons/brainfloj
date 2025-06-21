@@ -1,4 +1,7 @@
 (ns floj.wave-lexicon
+  "Logic for recording wave-signatures and bundling the collections of wave-signatures into
+   categories that are organized as detailed in the readme. In a coming update I will release
+   detailed mermaid diagrams detailing this structure more thoroughly."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]

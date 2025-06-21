@@ -1,4 +1,9 @@
 (ns floj.lor
+  ".lorfiles are the basic building block of recording directories, and this namespace
+   handles the format of .lor and recording_metadata.edn files. Also allows basic reading
+   of these files via the CLI. 
+   
+   The write-metadata function is important for novel recordings such as wave-signatures."
   (:require [clojure.java.io :as io]
             [clojure.edn :as edn]
             [clojure.pprint :refer [pprint]]

@@ -1,4 +1,13 @@
 (ns floj.wave-refraction
+  "Logic for generating the golden-tensors. Golden-tensors aren't tensors at all so the name
+   is somewhat misleading, but I do intend on incorporating tensors in the future, and the name
+   is both evocative and fun. You can change the calibration script to be as long as you want for
+   each section and to prompt whatever activity you think is best for calibration. This serves more
+   as an example aimed towards the example pong application included in this alpha stage.
+   
+   There is a bug here where it will say 'sleep interruped' while calibrating, but it seems to work
+   anyways so for now I am leaving it as it is and I will investigate that further as time goes on.
+   I could talk about why it is not very important at length but I do not have the space here."
   (:require [floj.api :as api]
             [floj.calibration :as calibrate]
             [floj.frequency-analysis :as fft]

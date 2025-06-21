@@ -3,7 +3,9 @@
             [brain-pong.game-state :as pong-state]
             [brain-pong.training-wheels :as wheels]
             [hyperfiddle.electric-dom3 :as dom]
+            [missionary.core :as m]
             [mount.core :as mount]
+            #?(:clj [clojure.core.async :as async :refer [go go-loop chan >! <! timeout poll! close! pipeline-async mult tap untap alt! alts!]])
             #?(:clj [brain-pong.signature :as signature])
             #?(:clj [floj.api :as api])
             #?(:clj [floj.state :as state])
@@ -15,6 +17,50 @@
             #?(:clj [floj.record :as record])
             #?(:clj [floj.wave-refraction :as refraction])
             #?(:clj [floj.keybindings :as kb])))
+
+#?(:clj
+   (do
+     (def pipeline-config
+       {:raw-eeg-buffer-size 100        ; Buffer 1 seconds at 100Hz
+        :feature-buffer-size 100        ; Buffer ~5 seconds of features at 20Hz
+        :confidence-buffer-size 50      ; Buffer ~2.5 seconds of confidence at 20Hz
+        :output-buffer-size 20          ; Small output buffer for immediate consumption
+        :feature-extraction-rate 30     ; Extract features at 20Hz
+        :confidence-calculation-rate 15 ; Calculate confidence at 15Hz
+        :backpressure-threshold 0.8     ; Start dropping when 80% full
+        :parallelism 2                  ; Parallel processing threads
+        :ingestion-rate-ms 50           ; 20Hz ingestion
+        :poll-rate-ms 50})))            ; 10Hz polling
+
+(defn get-pipeline-stats []
+  (get-in @pong-state/state [:bci :pipeline-stats]))
+
+(defn update-pipeline-stats! [update-fn & args]
+  (apply swap! pong-state/state update-in [:bci :pipeline-stats] update-fn args))
+
+(defn get-pipeline-running? []
+  (get-in @pong-state/state [:bci :pipeline-running?] false))
+
+(defn set-pipeline-running! [running?]
+  (println "🔧 Setting pipeline-running? to:" running?)
+  (swap! pong-state/state assoc-in [:bci :pipeline-running?] running?)
+  (let [actual-value (get-in @pong-state/state [:bci :pipeline-running?])]
+    (println "🔧 Verified pipeline-running? is now:" actual-value)
+    (when (not= running? actual-value)
+      (println "⚠️ WARNING: pipeline-running? mismatch! Expected:" running? "Actual:" actual-value))
+    actual-value))
+
+(defn get-bci-state []
+  (get-in @pong-state/state [:bci]))
+
+(defn update-bci-state! [update-fn & args]
+  (apply swap! pong-state/state update-in [:bci] update-fn args))
+
+(defn get-confidence-data []
+  (get-in @pong-state/state [:bci :confidence]))
+
+(defn update-confidence-data! [confidence-data]
+  (swap! pong-state/state assoc-in [:bci :confidence] confidence-data))
 
 #?(:cljs (declare process-bci-input))
 
@@ -225,6 +271,50 @@
         :total-actions total-actions
         :successful-actions successful-actions})))
 
+#?(:clj
+   (defn calculate-recent-performance-clj
+     "Calculate recent performance metrics from the :action-history buffer in :bci"
+     [state-atom]
+     (try
+       (let [state @state-atom
+             bci-state (get-bci-state)
+             action-history (:action-history bci-state) ; Should be a vector of maps
+             current-time (System/currentTimeMillis)
+             recent-window 2000
+             recent-actions (filter #(<= (- current-time (:timestamp %)) recent-window)
+                                    action-history)
+             total-actions (count recent-actions)
+             successful-actions (count (filter :successful recent-actions))
+             assisted-actions (count (filter :assisted recent-actions))
+             natural-actions (- successful-actions assisted-actions)
+             success-rate (if (pos? total-actions)
+                            (/ successful-actions total-actions)
+                            0.5)
+             confidence-values (keep :confidence recent-actions)
+             avg-confidence (if (seq confidence-values)
+                              (/ (reduce + confidence-values) (count confidence-values))
+                              0.3)
+             recent-sample-count (count (filter #(<= (- current-time (:timestamp %)) 5000)
+                                                action-history))]
+
+         {:success-rate success-rate
+          :total-actions total-actions
+          :successful-actions successful-actions
+          :assisted-actions assisted-actions
+          :natural-actions natural-actions
+          :avg-confidence avg-confidence
+          :recent-sample-count recent-sample-count})
+
+       (catch Exception e
+         (println "Error calculating recent performance:" (.getMessage e))
+         {:success-rate 0.5
+          :total-actions 0
+          :successful-actions 0
+          :assisted-actions 0
+          :natural-actions 0
+          :avg-confidence 0.3
+          :recent-sample-count 0}))))
+
 #?(:cljs
    (defn update-performance-history
      "Enhanced version that tracks assisted vs natural actions"
@@ -245,7 +335,7 @@
                               :max-confidence max-confidence
                               :up (:up confidence-data)
                               :down (:down confidence-data)}]
-       
+
        ; Update state with new records
        (swap! pong-state/state update-in [:bci :action-history]
               (fn [history]
@@ -380,23 +470,9 @@
          (println "Error calculating training assistance:" (.getMessage e))
          nil))))
 
-(defn apply-smart-assistance!
-  "Apply training wheels assistance with intelligence-based scaling"
-  [assistance-info confidence-data]
-  (let [{:keys [direction assistance-level]} assistance-info
-        base-speed 1.0]
-
-    ; Use existing training wheels boost logic
-    (wheels/apply-progressive-boost direction assistance-level base-speed)
-
-    ; Track assistance for adaptive learning
-    (swap! pong-state/state update-in [:training-wheels :assistance-count] (fnil inc 0))
-
-    (println "Training assistance applied:" direction "at level" assistance-level)))
-
 #?(:cljs
    (defn update-client-performance-tracking!
-     "Enhanced performance tracking that feeds back to server"
+     "Performance tracking that feeds back to server"
      [action-type confidence-data successful? assisted?]
      (do
        (update-performance-history action-type confidence-data successful?)
@@ -412,32 +488,9 @@
                 (fn [history]
                   (take-last 20 (conj (or history []) performance-record))))))))
 
+; Used in both the synchronous and asynchronous versions in order to call the back end processing
 #?(:clj
-   (defn process-live-training-integration!
-     "Main function to handle live training and signature enhancement"
-     [category confidence-data eeg-sample game-context recent-performance]
-     (try
-       (let [category-intelligence (lexi/load-category category)]
-         (when category-intelligence
-           ; 1. Check for live signature enhancement opportunity
-           (signature/capture-live-enhancement! category confidence-data eeg-sample game-context)
-
-           ; 2. Check for training wheels assistance
-           (let [assistance-info (should-provide-training-assistance?
-                                  confidence-data game-context category-intelligence recent-performance)]
-
-             (when assistance-info
-               (apply-smart-assistance! assistance-info confidence-data)
-
-               ; 3. Update performance tracking for future assistance calculations
-               (wheels/update-game-stats!
-                (if (> (:assistance-level assistance-info) 0.5) :assisted :natural))))))
-
-       (catch Exception e
-         (println "Error in live training integration:" (.getMessage e))))))
-
-#?(:clj
-   (defn enhanced-brain-activity-response-server
+   (defn match-brain-activity-server
      "Enhanced version with fixed state management"
      [profile-name category game-context recent-performance]
      (try
@@ -490,7 +543,7 @@
                should-update-intelligence? (and circuit-breaker-ok?
                                                 (or time-interval-ok?
                                                     high-confidence-update?))]
-
+           (println "recent performance " recent-performance)
            (println "  Circuit breaker OK?:" circuit-breaker-ok?)
            (println "  Time interval OK?:" time-interval-ok?)
            (println "  High confidence update?:" high-confidence-update?)
@@ -562,10 +615,10 @@
          (.printStackTrace e)
          {:up 0.0 :down 0.0 :confidence 0.0 :error (.getMessage e)}))))
 
-
+; Synchronous input processing
 #?(:cljs
    (defn process-bci-input
-     "BCI input processing with client-side adaptive threshold - FIXED"
+     "BCI input processing with client-side adaptive threshold"
      []
      (let [state @pong-state/state
            connected? (get-in state [:bci :device-connected?])
@@ -576,62 +629,805 @@
            time-since-action (- current-time last-action-time)]
        (if (and connected? matching?)
          (do
-           ; Get base threshold from server data - FIXED to use correct path
+           ; Get base threshold from server data
            (let [base-threshold (or (get-in state [:bci :confidence :dynamic-threshold]) 0.05)]
              ; Calculate client-side adaptive threshold
              (let [adaptive-threshold (get-adaptive-threshold base-threshold)
                    min-action-interval 100]
-                 (if (> time-since-action min-action-interval)
-                   (do
-                     (let [up-confidence (or (:up confidence) 0.0)
-                           down-confidence (or (:down confidence) 0.0)
-                           confidence-gap (Math/abs (- up-confidence down-confidence))
-                           min-gap 0.002
-                           avg-confidence-level (/ (+ up-confidence down-confidence) 2)
+               (if (> time-since-action min-action-interval)
+                 (do
+                   (let [up-confidence (or (:up confidence) 0.0)
+                         down-confidence (or (:down confidence) 0.0)
+                         confidence-gap (Math/abs (- up-confidence down-confidence))
+                         min-gap 0.002
+                         avg-confidence-level (/ (+ up-confidence down-confidence) 2)
 
-                           ; If confidence levels are high, require bigger gap
-                           ; If confidence levels are low, allow smaller gap
-                           adaptive-min-gap (cond
-                                              (> avg-confidence-level 0.6) (* min-gap 1.5)
-                                              (> avg-confidence-level 0.4) min-gap
-                                              (> avg-confidence-level 0.2) (* min-gap 0.5)
-                                              :else (* min-gap 0.25))
+                         ; If confidence levels are high, require bigger gap
+                         ; If confidence levels are low, allow smaller gap
+                         adaptive-min-gap (cond
+                                            (> avg-confidence-level 0.6) (* min-gap 1.5)
+                                            (> avg-confidence-level 0.4) min-gap
+                                            (> avg-confidence-level 0.2) (* min-gap 0.5)
+                                            :else (* min-gap 0.25))
 
-                           ; Use much lower thresholds to allow movement
-                           effective-threshold (min adaptive-threshold 0.15) ; Cap at 0.15
+                         ; Use much lower thresholds to allow movement
+                         effective-threshold (min adaptive-threshold 0.15) ; Cap at 0.15
 
-                           should-move-up? (and (>= up-confidence effective-threshold)
-                                                (> up-confidence down-confidence)
-                                                (> confidence-gap adaptive-min-gap))
-                           should-move-down? (and (>= down-confidence effective-threshold)
-                                                  (> down-confidence up-confidence)
-                                                  (> confidence-gap adaptive-min-gap))]
-                       (cond
-                         should-move-up?
-                         (do
-                           (js/console.log "🔴 BCI: UP action triggered!")
-                           (pong-state/move-paddle! :up)
-                           (swap! pong-state/state assoc-in [:bci :last-action-time] current-time)
-                           (update-performance-history :up confidence true))
+                         should-move-up? (and (>= up-confidence effective-threshold)
+                                              (> up-confidence down-confidence)
+                                              (> confidence-gap adaptive-min-gap))
+                         should-move-down? (and (>= down-confidence effective-threshold)
+                                                (> down-confidence up-confidence)
+                                                (> confidence-gap adaptive-min-gap))]
+                     (cond
+                       should-move-up?
+                       (do
+                         (js/console.log "🔴 BCI: UP action triggered!")
+                         (pong-state/move-paddle! :up)
+                         (swap! pong-state/state assoc-in [:bci :last-action-time] current-time)
+                         (update-performance-history :up confidence true))
 
-                         should-move-down?
-                         (do
-                           (js/console.log "🔵 BCI: DOWN action triggered!")
-                           (pong-state/move-paddle! :down)
-                           (swap! pong-state/state assoc-in [:bci :last-action-time] current-time)
-                           (update-performance-history :down confidence true))
+                       should-move-down?
+                       (do
+                         (js/console.log "🔵 BCI: DOWN action triggered!")
+                         (pong-state/move-paddle! :down)
+                         (swap! pong-state/state assoc-in [:bci :last-action-time] current-time)
+                         (update-performance-history :down confidence true))
 
-                         :else
-                         (do
-                           (js/console.log "⚪ BCI: No action - thresholds not met")
+                       :else
+                       (do
+                         (js/console.log "⚪ BCI: No action - thresholds not met")
                            ; Still track confidence readings even when no action taken
-                           (let [poll-trigger (get-in state [:bci :poll-trigger] 0)]
-                             (when (= 0 (mod poll-trigger 5))
-                               (js/console.log "Recording no-action data point")
-                               (update-performance-history :none confidence false)))))))
-                   (do
-                     (js/console.log "Time interval check failed - too soon since last action")))))))
-         (do
-           ;(js/console.log "❌ BCI conditions not met:")
-           (when (not connected?) (js/console.log "❌  - Not connected"))
-           (when (not matching?) (js/console.log "❌  - Not matching"))))))
+                         (let [poll-trigger (get-in state [:bci :poll-trigger] 0)]
+                           (when (= 0 (mod poll-trigger 5))
+                             (js/console.log "Recording no-action data point")
+                             (update-performance-history :none confidence false)))))))
+                 (do
+                   (js/console.log "Time interval check failed - too soon since last action")))))))
+       (do
+         ; BCI connection conditions not met
+         (when (not connected?) (js/console.log "❌  - Not connected"))
+         (when (not matching?) (js/console.log "❌  - Not matching"))))))
+
+;; Async Code Begins
+#?(:clj
+   (do
+     (defn create-pipeline-channels []
+       {:raw-eeg (chan (:raw-eeg-buffer-size pipeline-config))
+        :features (chan (:feature-buffer-size pipeline-config))
+        :confidence (chan (:confidence-buffer-size pipeline-config))
+        :output (chan (:output-buffer-size pipeline-config))})
+
+     (defn create-control-channels []
+       {:ingestion-control (chan 2)
+        :feature-control (chan 2)
+        :confidence-control (chan 2)
+        :output-control (chan 2)})
+
+     (defn create-multiplexers [channels]
+       {:confidence-mult (mult (:confidence channels))})
+
+     (defn safe-put!
+       ([channel value]
+        (try
+          (async/put! channel value)
+          (catch Exception e
+            (println "Error putting to channel:" (.getMessage e))
+            false)))
+       ([channel value drop-counter-key]
+        (try
+          (async/put! channel value)
+          (catch Exception e
+            (update-bci-state! update-in [:pipeline :errors] inc)
+            false))))
+
+     (defn should-drop-sample? [channel buffer-size]
+       (try
+         (let [current-size (count (.buf channel))
+               threshold (* buffer-size (:backpressure-threshold pipeline-config))]
+           (> current-size threshold))
+         (catch Exception e
+           false)))
+
+     (defn start-eeg-ingestion! [channels control-channels]
+       (let [{:keys [raw-eeg]} channels
+             {:keys [ingestion-control]} control-channels]
+         (println "🎯 Starting EEG ingestion thread...")
+         (go
+           (loop [iteration 0 consecutive-errors 0]
+             (if-not (:running? (get-bci-state))
+               (println "EEG ingestion stopping - not running")
+               (let [timeout-ch (timeout (:ingestion-rate-ms pipeline-config))
+                     [val port] (alts! [ingestion-control timeout-ch])]
+                 (cond
+                   (= port ingestion-control)
+                   (when (= val :stop)
+                     (println "🛑 EEG ingestion received stop signal"))
+
+                   (= port timeout-ch)
+                   (let [[next-iteration next-errors]
+                         (try
+                           (let [recording-status (try
+                                                    (and (bound? #'state/recording?) @state/recording?)
+                                                    (catch Exception e false))
+                                 eeg-data-count (try
+                                                  (count @state/eeg-data)
+                                                  (catch Exception e 0))]
+                             (if (and recording-status (>= eeg-data-count 20))
+                               (let [recent-data (signature/get-recent-data 1.0)]
+                                 (cond
+                                   (and (seq recent-data) (>= (count recent-data) 20))
+                                   (do
+                                     (when (= 0 (mod iteration 20))
+                                       (println "📥 Got" (count recent-data) "recent samples for processing"))
+                                     (let [processed-data (mapv (fn [sample]
+                                                                  (if (map? sample)
+                                                                    sample
+                                                                    {:eeg sample
+                                                                     :timestamp (System/currentTimeMillis)}))
+                                                                recent-data)]
+                                       (if (>! raw-eeg processed-data)
+                                         (do
+                                           (update-bci-state! update-in [:pipeline-stats :samples-received] + (count processed-data))
+                                           [(inc iteration) 0])
+                                         (do
+                                           (println "⚠️ Failed to put samples into raw-eeg channel")
+                                           [(inc iteration) (inc consecutive-errors)]))))
+                                   :else
+                                   (do
+                                     (when (= 0 (mod iteration 50))
+                                       (println "⚠️ Insufficient recent data - Count:" (count recent-data) "Required: 20"))
+                                     [iteration consecutive-errors])))
+                               (do
+                                 (when (= 0 (mod iteration 100))
+                                   (println "⏳ Waiting for recording state and data. Recording:" recording-status "Data count:" eeg-data-count))
+                                 [iteration consecutive-errors])))
+                           (catch Exception e
+                             (println "❌ EEG ingestion error:" (.getMessage e))
+                             (update-bci-state! update-in [:pipeline-stats :errors] inc)
+                             (let [new-error-count (inc consecutive-errors)]
+                               (if (> new-error-count 10)
+                                 (do
+                                   (println "❌ Too many consecutive errors, pausing...")
+                                   (<! (timeout 2000))
+                                   [iteration 0])
+                                 [iteration new-error-count]))))]
+                     (recur next-iteration next-errors))
+
+                   :else
+                   (recur iteration consecutive-errors))))))))
+
+     (defn extract-features-safe [eeg-batch]
+       (try
+         (when (seq eeg-batch)
+           (println "🔬 Processing EEG batch with" (count eeg-batch) "samples")
+           (cond
+             ; If already processed with enhanced response, use directly
+             (and (map? (first eeg-batch))
+                  (contains? (first eeg-batch) :confidence)
+                  (contains? (first eeg-batch) :up)
+                  (contains? (first eeg-batch) :down))
+             (do
+               (println "📋 Using pre-processed enhanced response")
+               (first eeg-batch))
+
+             ; Otherwise, just structure the data for the confidence stage
+             :else
+             (do
+               (println "📊 Preparing data for enhanced processing")
+               {:raw-eeg-batch eeg-batch
+                :timestamp (System/currentTimeMillis)
+                :sample-count (count eeg-batch)
+                :processing-mode "raw-for-enhancement"})))
+         (catch Exception e
+           (println "❌ Feature extraction error:" (.getMessage e))
+           (update-bci-state! update-in [:pipeline-stats :errors] inc)
+           nil)))
+
+     (defn start-feature-extraction! [channels control-channels]
+       (let [{:keys [raw-eeg features]} channels
+             {:keys [feature-control]} control-channels]
+         (println "🧠 Starting feature extraction thread...")
+         (go-loop []
+           (if-not (:running? (get-bci-state))
+             (println "Feature extraction stopping - not running")
+             (alt!
+               feature-control ([msg]
+                                (when (= msg :stop)
+                                  (println "Feature extraction received stop signal")))
+
+               raw-eeg ([eeg-batch]
+                        (when eeg-batch
+                          (try
+                            (when-let [extracted-features (extract-features-safe eeg-batch)]
+                              (when (safe-put! features extracted-features :features-dropped)
+                                (update-bci-state! update-in [:pipeline-stats :features-extracted] inc)))
+                            (catch Exception e
+                              (println "Feature processing error:" (.getMessage e))
+                              (update-bci-state! update-in [:pipeline-stats :errors] inc)))
+                          (recur))))))))
+
+     (defn start-signature-enhancement-background! [channels category]
+       "Background signature enhancement - non-blocking"
+       (let [{:keys [confidence]} channels
+             {:keys [confidence-mult]} (:multiplexers @channels)
+             enhancement-chan (chan 5)]
+
+         ; Tap into confidence stream for signature enhancement
+         (tap confidence-mult enhancement-chan)
+
+         (go-loop []
+           (when (:running? (:bci @pong-state/state))
+             (try
+               (when-let [confidence-data (<! enhancement-chan)]
+                 ; Existing signature enhancement logic - but non-blocking
+                 (when (signature/should-attempt-category-update? category confidence-data)
+                   (let [eeg-sample (signature/get-recent-data 1)]
+                     (when eeg-sample
+                       ; Run in separate thread to not block pipeline
+                       (future
+                         (signature/update-category-thread-safe!
+                          category confidence-data (first eeg-sample)
+                          {:timestamp (System/currentTimeMillis)}
+                          nil))))))
+               (catch Exception e
+                 (println "Background enhancement error:" (.getMessage e))))
+             (recur)))
+
+         ; Cleanup
+         (untap confidence-mult enhancement-chan)
+         (close! enhancement-chan)))
+
+     (defn calculate-confidence-safe [features profile-name category state-atom]
+       (try
+         (cond
+           ; If features already contain confidence scores
+           (and (map? features)
+                (contains? features :confidence)
+                (contains? features :up)
+                (contains? features :down))
+           (do
+             (println "✅ Using existing enhanced confidence scores")
+             (let [result (merge features
+                                 {:timestamp (System/currentTimeMillis)
+                                  :profile-name profile-name
+                                  :category category
+                                  :processing-mode "async-pipeline-enhanced"
+                                  :fresh? true})]
+               (println "📋 Existing scores - Up:" (:up result) "Down:" (:down result))
+               result))
+
+           ; Call the enhanced response server
+           :else
+           (do
+             (println "🧮 Calling enhanced-brain-activity-response-server with fresh data")
+             (let [recent-performance (calculate-recent-performance-clj state-atom)
+                   current-state @state-atom
+                   game-context {:ball-position-validates-intent
+                                 (let [ball (get-in current-state [:game :ball])
+                                       paddle (get-in current-state [:game :player-paddle])]
+                                   (and ball paddle
+                                        (< (Math/abs (- (:x ball) (:x paddle))) 200)))
+                                 :game-active (get-in current-state [:game :playing?])
+                                 :timestamp (System/currentTimeMillis)}
+
+                   enhanced-result (match-brain-activity-server
+                                    profile-name
+                                    category
+                                    game-context
+                                    recent-performance)]
+
+               (if (:error enhanced-result)
+                 (do
+                   (println "❌ Enhanced response error:" (:error enhanced-result))
+                   {:up 0.0 :down 0.0 :confidence 0.0
+                    :error (:error enhanced-result)
+                    :processing-mode "error"
+                    :fresh? false
+                    :timestamp (System/currentTimeMillis)})
+                 (let [final-result (merge enhanced-result
+                                           {:timestamp (System/currentTimeMillis)
+                                            :profile-name profile-name
+                                            :category category
+                                            :processing-mode "async-pipeline-calculated"
+                                            :fresh? true
+                                            :feature-data features
+                                            :recent-performance recent-performance
+                                            :game-context game-context})]
+                   (println "✅ FINAL RESULT:")
+                   (println "  Final up:" (:up final-result))
+                   (println "  Final down:" (:down final-result))
+                   (println "  Final confidence:" (:confidence final-result))
+
+                   ; Ensure actual numbers, not nil
+                   (if (and (:up final-result) (:down final-result) (:confidence final-result))
+                     final-result
+                     (do
+                       (println "⚠️ WARNING: Enhanced result missing values, using defaults")
+                       (merge final-result
+                              {:up (or (:up final-result) 0.5)
+                               :down (or (:down final-result) 0.5)
+                               :confidence (or (:confidence final-result) 0.25)}))))))))
+         (catch Exception e
+           (println "❌ Enhanced confidence calculation error:" (.getMessage e))
+           (update-bci-state! update-in [:pipeline-stats :errors] inc)
+           {:up 0.0 :down 0.0 :confidence 0.0
+            :error (.getMessage e)
+            :processing-mode "error"
+            :fresh? false
+            :timestamp (System/currentTimeMillis)})))
+
+     (defn start-confidence-calculation! [channels control-channels profile-name state-atom]
+       (let [{:keys [features confidence]} channels
+             {:keys [confidence-control]} control-channels]
+         (println "🧮 Starting confidence calculation thread...")
+         (go-loop []
+           (if-not (:running? (get-bci-state))
+             (println "Confidence calculation stopping - not running")
+             (alt!
+               confidence-control ([msg]
+                                   (when (= msg :stop)
+                                     (println "Confidence calculation received stop signal")))
+
+               ; Add a timeout to ensure we continuous calling even without new features
+               (timeout 500) ([_]
+                              (try
+                                (println "🔄 Timeout-triggered confidence calculation")
+                                (let [confidence-result (calculate-confidence-safe
+                                                         nil  ; No specific features, will trigger enhanced response
+                                                         profile-name
+                                                         "pong"
+                                                         state-atom)]
+                                  (when (safe-put! confidence confidence-result :confidence-dropped)
+                                    (update-bci-state! update-in [:pipeline-stats :confidence-calculated] inc)))
+                                (catch Exception e
+                                  (println "Timeout confidence processing error:" (.getMessage e))
+                                  (update-bci-state! update-in [:pipeline-stats :errors] inc)))
+                              (recur))
+
+               features ([feature-data]
+                         (when feature-data
+                           (try
+                             (println "📥 Feature-triggered confidence calculation")
+                             (let [confidence-result (calculate-confidence-safe
+                                                      feature-data
+                                                      profile-name
+                                                      "pong"
+                                                      state-atom)]
+                               (when (safe-put! confidence confidence-result :confidence-dropped)
+                                 (update-bci-state! update-in [:pipeline-stats :confidence-calculated] inc)))
+                             (catch Exception e
+                               (println "Feature confidence processing error:" (.getMessage e))
+                               (update-bci-state! update-in [:pipeline-stats :errors] inc))))
+                         (recur)))))))
+
+     (defn calculate-training-assistance [confidence-data category game-context recent-performance]
+       (try
+         (let [profile-name (:profile-name confidence-data)
+               category-data (lexi/load-category category)
+               assistance-level (when category-data
+                                  (wheels/calculate-assistance-level
+                                   profile-name category-data recent-performance))
+               assistance-direction (when (and assistance-level (> assistance-level 0.1))
+                                      (wheels/should-provide-assistance?
+                                       game-context assistance-level))]
+           (when assistance-direction
+             {:direction assistance-direction
+              :assistance-level assistance-level
+              :reason "adaptive-assistance"
+              :timestamp (System/currentTimeMillis)}))
+         (catch Exception e
+           (println "Training assistance error:" (.getMessage e))
+           nil)))
+
+     (defn start-confidence-consumer! [channels state-atom]
+       (let [{:keys [confidence]} channels]
+         (println "🔄 Starting CONFIDENCE consumer thread...")
+         (go
+           (loop [consumed-count 0]
+             (if-not (:running? (get-bci-state))
+               (println "🛑 Confidence consumer stopping")
+               (when-let [val (<! confidence)]
+                 (let [current-time (System/currentTimeMillis)
+                       enhanced-data (merge val
+                                            {:consumer-processed-time current-time
+                                             :consumer-sequence consumed-count
+                                             :age 0
+                                             :fresh? true
+                                             :source "confidence-consumer"
+                                             :timestamp current-time})]
+
+                   (println "📤 CONSUMER #" consumed-count " - Up:" (:up enhanced-data) "Down:" (:down enhanced-data))
+
+                   ; Update state to trigger Electric reactivity
+                   (swap! state-atom
+                          (fn [current-state]
+                            (-> current-state
+                                (assoc-in [:bci :confidence] enhanced-data)
+                                (assoc-in [:bci :latest-output] enhanced-data)
+                                (assoc-in [:bci :reactive-timestamp] current-time)    ; Key for reactivity
+                                (assoc :last-bci-update current-time))))              ; Also at root level
+
+                   (recur (inc consumed-count)))))))))
+
+     (defn stop-optimized-bci-pipeline! []
+       (println "⏹️ Stopping UNIFIED optimized BCI pipeline")
+       (try
+         (update-bci-state! assoc :running? false)
+
+         ; Wait for threads to stop
+         (Thread/sleep 200)
+
+         ; Close all channels
+         (let [state (get-bci-state)
+               all-channels (:pipeline-channels state)]
+           (when-let [channels (:channels (:pipeline-channels all-channels))]
+             (doseq [chan (vals channels)]
+               (try
+                 (async/close! chan)
+                 (catch Exception e
+                   (println "Error closing channel:" (.getMessage e))))))
+
+           (when-let [control-channels (:control-channels (:pipeline-channels all-channels))]
+             (doseq [control-chan (vals control-channels)]
+               (try
+                 (async/close! control-chan)
+                 (catch Exception e
+                   (println "Error closing control channel:" (.getMessage e))))))
+
+           (when-let [multiplexers (:multiplexers (:pipeline-channels all-channels))]
+             (doseq [multi-chan (vals multiplexers)]
+               (try
+                 (async/close! multi-chan)
+                 (catch Exception e
+                   (println "Error closing control channel:" (.getMessage e))))))
+
+           (update-bci-state! assoc  :pipeline-channels {:channels {}
+                                                         :control-channels {}
+                                                         :multiplexers {}}
+                              :latest-output {:up 0.0
+                                              :down 0.0
+                                              :confidence 0.0
+                                              :timestamp (System/currentTimeMillis)
+                                              :fresh? false})
+
+           (println "✅ UNIFIED Pipeline stopped successfully")
+           {:stopped true})
+
+         (catch Exception e
+           (println "❌ UNIFIED Pipeline stop error:" (.getMessage e))
+           {:stopped false :error (.getMessage e)})))
+
+     (defn get-latest-bci-output []
+       (let [current-state @pong-state/state
+             current-output (get-in current-state [:bci :latest-output])
+             current-time (System/currentTimeMillis)
+             generation-time (or (:generation-time current-output)
+                                 (:timestamp current-output)
+                                 0)
+             age (- current-time generation-time)
+             pipeline-running? (:running? current-state)]
+
+         ; Create the output data structure
+         (let [output-data {:up (or (:up current-output) 0.0)
+                            :down (or (:down current-output) 0.0)
+                            :confidence (or (:confidence current-output) 0.0)
+                            :age age
+                            :generation-time generation-time
+                            :timestamp current-time
+                            :pipeline-running? (boolean pipeline-running?)
+                            :processing-mode (or (:processing-mode current-output) "unknown")
+                            :fresh? (< age 1000)
+                            :dynamic-threshold (or (:dynamic-threshold current-output) 0.05)
+                            :confidence-gap (Math/abs (- (or (:up current-output) 0.0)
+                                                         (or (:down current-output) 0.0)))
+                            :separation-score (or (:separation-score current-output) 0.0)
+                            :triangulation-quality (or (:triangulation-quality current-output) 0.0)
+                            :intelligence-grade (or (:intelligence-grade current-output) "unknown")}]
+
+           ;(println "🔍 SERVER OUTPUT DEBUG:")
+           ;(println "  Pipeline running:" pipeline-running?)
+           ;(println "  Raw up value:" (:up current-output))
+           ;(println "  Raw down value:" (:down current-output))
+           ;(println "  Output data up:" (:up output-data))
+           ;(println "  Output data down:" (:down output-data))
+           ;(println "  Processing mode:" (:processing-mode output-data))
+           ;(println "  Fresh:" (:fresh? output-data))
+           output-data)))
+
+     (defn update-confidence-from-pipeline [confidence-data]
+       "Server-side ONLY function to update confidence state"
+       (let [current-time (System/currentTimeMillis)
+             enhanced-data (merge confidence-data
+                                  {:server-sync-time current-time
+                                   :age 0  ; Fresh from server
+                                   :fresh? true
+                                   :source "server-pipeline"})]
+
+         ;(println "📤 SERVER updating confidence state:")
+         ;(println "  Up:" (:up enhanced-data))
+         ;(println "  Down:" (:down enhanced-data))
+         ;(println "  Mode:" (:processing-mode enhanced-data))
+
+         ; Single atomic update to main state
+         (swap! pong-state/state
+                (fn [current-state]
+                  (-> current-state
+                      (assoc-in [:bci :confidence] enhanced-data)
+                      (assoc-in [:bci :latest-output] enhanced-data)
+                      (assoc-in [:bci :last-poll-time] current-time))))
+
+         ; Verification
+         (let [updated-confidence (get-in @pong-state/state [:bci :confidence])]
+           (println "✅ Server state update verified - Up:" (:up updated-confidence)))
+
+         enhanced-data))
+
+
+     (defn start-output-manager! [channels control-channels category]
+       "Manages pipeline output, no state mutation"
+       (let [{:keys [confidence output]} channels
+             {:keys [output-control]} control-channels]
+         (go-loop [output-count 0]
+           (if-not (:running? (get-bci-state))
+             (println "Output manager stopping - not running")
+             (let [next-count
+                   (alt!
+                     output-control ([msg]
+                                     (when (= msg :stop)
+                                       (println "Output manager received stop signal"))
+                                     output-count)
+
+                     confidence ([val]
+                                 (if val
+                                   (do
+                                     (try
+                                       (let [current-time (System/currentTimeMillis)
+                                             final-output (merge val
+                                                                 {:processing-mode "async-pipeline"
+                                                                  :fresh? true
+                                                                  :timestamp current-time
+                                                                  :generation-time current-time
+                                                                  :output-sequence output-count
+                                                                  :age 0})]
+
+                                         ;(println "  Output manager processing:")
+                                         ;(println "  Up:" (format "%.4f" (:up final-output)))
+                                         ;(println "  Down:" (format "%.4f" (:down final-output)))
+
+                                         (update-bci-state! assoc :latest-output final-output)
+
+                                         (update-bci-state!
+                                          (fn [p]
+                                            (-> p
+                                                (assoc :latest-output final-output)
+                                                (update :action-history
+                                                        #(let [history (conj (or % []) final-output)]
+                                                           (if (> (count history) 20)
+                                                             (subvec history (- (count history) 20))
+                                                             history))))))
+
+                                         (println "✅ Pipeline state updated - Up:" (:up final-output) "Down:" (:down final-output))
+                                         (update-bci-state! update-in [:pipeline-stats :outputs-generated] inc)
+                                         (inc output-count))
+                                       (catch Exception e
+                                         (println "❌ Output processing error:" (.getMessage e))
+                                         (update-bci-state! update-in [:pipeline-stats :errors] inc)
+                                         output-count))
+                                     output-count))
+
+                                 :default
+                                 (do
+                                   (<! (timeout 50))
+                                   output-count)))]
+               (recur next-count))))))
+
+
+     (defn start-optimized-bci-pipeline! [profile-name category]
+       (try
+         ;(println "Starting UNIFIED optimized BCI pipeline with profile:" profile-name "category:" category)
+         (let [recording? (try
+                            (and (bound? #'state/recording?) @state/recording?)
+                            (catch Exception e
+                              (println "Recording check failed:" (.getMessage e))
+                              false))
+               eeg-available? (try
+                                (pos? (count @state/eeg-data))
+                                (catch Exception e
+                                  (println "EEG data check failed:" (.getMessage e))
+                                  false))]
+
+           ; Stop existing pipeline
+           (when (:running? (get-pipeline-stats))
+             (println "📋 Stopping existing pipeline...")
+             (stop-optimized-bci-pipeline!)
+             (Thread/sleep 300))
+
+           ; Initialize pipeline
+           (let [channels (create-pipeline-channels)
+                 control-channels (create-control-channels)
+                 multiplexers (create-multiplexers channels)]
+
+             (update-bci-state! assoc
+                                :running? true
+                                :profile-name profile-name
+                                :category category
+                                :pipeline-channels {:channels channels
+                                                    :control-channels control-channels
+                                                    :multiplexers multiplexers}
+                                :latest-output  {:up 0.0
+                                                 :down 0.0
+                                                 :confidence 0.0
+                                                 :timestamp (System/currentTimeMillis)
+                                                 :processing-mode "pipeline-starting"
+                                                 :fresh? true}
+                                :pipeline-stats {:samples-received 0
+                                                 :samples-processed 0
+                                                 :features-extracted 0
+                                                 :confidence-calculated 0
+                                                 :outputs-generated 0
+                                                 :errors 0
+                                                 :pipeline-starts (inc (get-in (get-pipeline-stats) [:stats :pipeline-starts] 0))})
+
+             ; Update main state to show pipeline is starting
+             (swap! pong-state/state assoc-in [:bci :confidence :processing-mode] "pipeline-starting")
+
+             ; Start threads
+             (start-eeg-ingestion! channels control-channels)
+             (Thread/sleep 100)
+             (start-feature-extraction! channels control-channels)
+             (Thread/sleep 100)
+             (start-confidence-calculation! channels control-channels profile-name pong-state/state)
+             (Thread/sleep 100)
+             (start-output-manager! channels control-channels category)
+             (Thread/sleep 200)
+             (start-confidence-consumer! channels pong-state/state)
+             (Thread/sleep 200)
+
+             (println "✅ UNIFIED Pipeline started successfully")
+             {:started true
+              :profile-name profile-name
+              :category category
+              :timestamp (System/currentTimeMillis)}))
+
+         (catch Exception e
+           (println "❌ UNIFIED PIPELINE STARTUP ERROR:" (.getMessage e))
+           (swap! pong-state/state assoc-in [:bci :confidence :processing-mode] "startup-error")
+           {:started false
+            :error (.getMessage e)
+            :timestamp (System/currentTimeMillis)})))))
+
+#?(:cljs
+   (do
+     (defn get-client-latest-bci-output []
+       (let [current-state (get-bci-state)
+             current-output (:latest-output current-state)
+             current-time (js/Date.now)
+             generation-time (or (:generation-time current-output)
+                                 (:timestamp current-output)
+                                 0)
+             age (- current-time generation-time)
+             pipeline-running? (:running? current-state)]
+
+         (let [fallback-confidence (get-confidence-data)
+               actual-up (if (and (:up current-output) (not (zero? (:up current-output))))
+                           (:up current-output)
+                           (:up fallback-confidence 0.0))
+               actual-down (if (and (:down current-output) (not (zero? (:down current-output))))
+                             (:down current-output)
+                             (:down fallback-confidence 0.0))
+               actual-confidence (if (and (:confidence current-output) (not (zero? (:confidence current-output))))
+                                   (:confidence current-output)
+                                   (:confidence fallback-confidence 0.0))
+
+               output-data {:up actual-up
+                            :down actual-down
+                            :confidence actual-confidence
+                            :age age
+                            :generation-time generation-time
+                            :timestamp current-time
+                            :pipeline-running? (boolean pipeline-running?)
+                            :processing-mode (or (:processing-mode current-output) "unknown")
+                            :fresh? (< age 1000)
+                            :dynamic-threshold (or (:dynamic-threshold current-output) 0.05)
+                            :confidence-gap (Math/abs (- actual-up actual-down))
+                            :separation-score (or (:separation-score current-output) 0.0)
+                            :triangulation-quality (or (:triangulation-quality current-output) 0.0)
+                            :intelligence-grade (or (:intelligence-grade current-output) "unknown")
+                            :source "server-output-fixed"}]
+
+           output-data)))
+
+     (defn apply-smart-assistance!
+       "Apply training wheels assistance with intelligence-based scaling"
+       [assistance-info confidence-data]
+       (let [{:keys [direction assistance-level]} assistance-info
+             base-speed 1.0]
+
+         (wheels/apply-progressive-boost direction assistance-level base-speed)
+
+         (swap! pong-state/state update-in [:training-wheels :assistance-count] (fnil inc 0))
+
+         (println "Training assistance applied:" direction "at level" assistance-level)))
+
+     (defn process-async-bci-input! []
+       "Async BCI input processing - pure/read-only with adaptive thresholds"
+       (let [fresh-state @pong-state/state
+             output (get-client-latest-bci-output)
+             bci (:bci fresh-state)
+             confidence (:confidence bci)
+             connected? (get-in fresh-state [:bci :device-connected?])
+             matching? (get-in fresh-state [:bci :matching?])
+             streaming? (get-in fresh-state [:bci :streaming?])
+             pipeline-running? (get-in fresh-state [:bci :pipeline-running?])
+             confidence-data (get-in fresh-state [:bci :confidence])
+             last-action-time (get-in fresh-state [:bci :last-action-time] 0)
+             server-timestamp (get confidence-data :timestamp 0)
+             current-time (js/Date.now)
+             actual-age (- current-time server-timestamp)]
+
+         (js/console.log "🔍 === ASYNC BCI INPUT ===")
+         (js/console.log "🧠 Full BCI state:" (clj->js bci))
+         (js/console.log "🔍 Connected:" connected? "Matching:" matching? "Streaming:" streaming?)
+         (js/console.log "🔍 Pipeline running:" pipeline-running? "Connected:" connected?)
+         (js/console.log "🔍 Raw Confidence:" confidence-data)
+         (js/console.log "🔍 Confidence age:" (:age confidence-data) "ms" "Last Action:" actual-age)
+         #_(js/console.log "🔍 Age since last query:" (:age output) "ms")
+         (js/console.log "🔍 Up:" (:up confidence-data) "Down:" (:down confidence-data) "Confidence:" (:confidence confidence-data))
+         (js/console.log "🔍 Fresh:" (:fresh? confidence-data))
+
+         (when (and connected? matching? streaming? pipeline-running? confidence-data
+                    (> actual-age 120))
+           (let [up-confidence (get confidence-data :up 0.0)
+                 down-confidence (get confidence-data :down 0.0)
+                 is-fresh? (get confidence-data :fresh? false)
+                 consumer-time (get confidence-data :consumer-processed-time 0)
+                 threshold (get-in fresh-state [:bci :threshold])
+                 confidence-gap (Math/abs (- up-confidence down-confidence))
+                 min-gap 0.01]
+
+             (js/console.log "🎯 Action check - Fresh:" is-fresh? "Age:" actual-age "Gap:" confidence-gap)
+             (js/console.log "🎯 Thresholds - Base:" threshold "Min gap:" min-gap)
+
+             (when (and is-fresh? (< actual-age 2000))
+               (cond
+                 (and (>= up-confidence threshold)
+                      (> up-confidence down-confidence)
+                      (> confidence-gap min-gap))
+                 (do
+                   (js/console.log "🔴 BCI: UP action! (up:" up-confidence " down:" down-confidence ")")
+                   (pong-state/move-paddle! :up)
+                   (swap! pong-state/state assoc-in [:bci :last-action-time] current-time))
+
+                 (and (>= down-confidence threshold)
+                      (> down-confidence up-confidence)
+                      (> confidence-gap min-gap))
+                 (do
+                   (js/console.log "🔵 BCI: DOWN action! (up:" up-confidence " down:" down-confidence ")")
+                   (pong-state/move-paddle! :down)
+                   (swap! pong-state/state assoc-in [:bci :last-action-time] current-time))
+
+                 :else
+                 (js/console.log "⚪ BCI: No action - thresholds not met")))))))))
+
+
+(e/defn Process-live-training-integration!
+  "Currently Unimplemented
+   Main function to handle live training and signature enhancement"
+  [category confidence-data eeg-sample game-context recent-performance]
+  (e/server
+   (let [category-intelligence (lexi/load-category category)]
+     (when category-intelligence
+       ; Check for live signature enhancement opportunity
+       (signature/capture-live-enhancement! category confidence-data eeg-sample game-context)
+
+       ; Check for training wheels assistance
+       (let [assistance-info (should-provide-training-assistance?
+                              confidence-data game-context category-intelligence recent-performance)]
+
+         (when assistance-info
+           (e/client (apply-smart-assistance! assistance-info confidence-data))
+
+           ; Update performance tracking for future assistance calculations
+           (wheels/update-game-stats!
+            (if (> (:assistance-level assistance-info) 0.5) :assisted :natural))))))))

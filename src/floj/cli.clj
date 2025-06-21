@@ -1,4 +1,6 @@
 (ns floj.cli
+  "This is the entry point to the BrainFloj CLI and initializes the shared state between
+   BrainFloj modules and applications built on top of it."
   (:require [floj.api :as api]
             #_[floj.bluetooth :as bluetooth] ;coming soon!
             [floj.calibration :as calibrate]

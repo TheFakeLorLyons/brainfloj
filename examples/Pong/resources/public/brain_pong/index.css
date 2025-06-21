@@ -205,8 +205,9 @@ body {
 
   /* BCI Panel */
 .bci-panel {
-  background-color: #f0f8ff;
+  background-color: #1E1E1E;
   border-radius: 8px;
+  color: #caffa7;
   padding: 15px;
   margin: 20px 0;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
@@ -214,7 +215,7 @@ body {
 
 .bci-panel h2 {
   margin-top: 0;
-  color: #2a539e;
+  color: #4CAF50;
   border-bottom: 1px solid #ccc;
   padding-bottom: 8px;
 }
@@ -309,7 +310,7 @@ body {
   display: inline-block;
   width: 200px;
   height: 20px;
-  background-color: #e0e0e0;
+  background-color: #1E1E1E;
   border-radius: 4px;
   overflow: hidden;
   position: relative;
@@ -385,7 +386,7 @@ body {
 
 /* Threshold Adjustment */
 .threshold-adjustment {
-  background-color: #fafafa;
+  background-color: #1E1E1E;
   padding: 10px;
   border-radius: 4px;
   margin-top: 15px;
@@ -412,7 +413,7 @@ body {
   border-radius: 4px;
   appearance: none;
   -webkit-appearance: none;
-  background: #e0e0e0;
+  background: #1E1E1E;
 }
 
 .slider-control input[type="range"]::-webkit-slider-thumb {
@@ -430,7 +431,7 @@ body {
 
 
 .assistance-display {
-   background: #f0f8ff;
+   background: #1E1E1E;
    border: 2px solid #4CAF50;
    border-radius: 8px;
    padding: 12px;
@@ -457,7 +458,7 @@ body {
  .assistance-controls {
    margin: 10px 0;
    padding: 8px;
-   background: #f5f5f5;
+   background: #1E1E1E;
    border-radius: 4px;
  }
  

@@ -9,6 +9,7 @@
 
 (def client-state (atom nil))
 
+; Synchronous game loop
 (e/defn GameLoop []
   (let [state (e/watch pong-state/state)
         profile-name (or (get-in state [:bci :user-profile :name]) "default")]
@@ -44,7 +45,7 @@
 
                          ; BCI processing including training wheels
                          (when (and connected? matching? streaming?)
-                           
+
                            ; Check for training assistance first
                            (if (and training-assistance
                                     (> (:assistance-level training-assistance) 0.2))
@@ -52,7 +53,7 @@
                                (js/console.log "Applying training assistance:"
                                                (:direction training-assistance)
                                                "at level" (:assistance-level training-assistance))
-                               
+
                                ; Apply training wheels assistance
                                (case (:direction training-assistance)
                                  :up (do
@@ -97,6 +98,57 @@
            (reset! frame-id-atom (js/requestAnimationFrame enhanced-game-loop))))
 
        ; Cleanup
+       (e/on-unmount
+        #(when @frame-id-atom
+           (js/cancelAnimationFrame @frame-id-atom)
+           (reset! frame-id-atom nil)))
+       nil))))
+
+; ...Asynchronous game loop
+(e/defn AsyncGameLoop []
+  (let [state (e/watch pong-state/state)
+        profile-name (or (get-in state [:bci :user-profile :name]) "default")]
+    (e/client
+     (let [playing? (get-in state [:game :playing?])
+           frame-id-atom (atom nil)
+           last-frame-time (atom 0)
+           last-bci-debug (atom 0)]
+
+       (when @frame-id-atom
+         (js/cancelAnimationFrame @frame-id-atom)
+         (reset! frame-id-atom nil))
+
+       (when playing?
+         (letfn [(enhanced-game-loop [current-time]
+                   (let [time-since-last (- current-time @last-frame-time)
+                         target-fps 60
+                         target-frame-time (/ 1000 target-fps)]
+                     (when (>= time-since-last target-frame-time)
+                       (reset! last-frame-time current-time)
+
+                       ; Get fresh state for each frame
+                       (let [fresh-state @pong-state/state
+                             matching? (get-in fresh-state [:bci :matching?])
+                             connected? (get-in fresh-state [:bci :device-connected?])
+                             streaming? (get-in fresh-state [:bci :streaming?])]
+
+                         ; Handle keyboard input
+                         (let [keys-pressed (get fresh-state :keys-pressed #{})]
+                           (when (contains? keys-pressed "ArrowUp")
+                             (pong-state/move-paddle! :up))
+                           (when (contains? keys-pressed "ArrowDown")
+                             (pong-state/move-paddle! :down)))
+
+                         ; Handle BCI input using processing-function
+                         (when (and connected? matching? streaming?)
+                           (bci/process-async-bci-input!))
+
+                         (pong-state/brain-game-loop-tick!)))
+
+                     (when (get-in @pong-state/state [:game :playing?])
+                       (reset! frame-id-atom (js/requestAnimationFrame enhanced-game-loop)))))]
+           (reset! frame-id-atom (js/requestAnimationFrame enhanced-game-loop))))
+
        (e/on-unmount
         #(when @frame-id-atom
            (js/cancelAnimationFrame @frame-id-atom)
@@ -176,17 +228,17 @@
       (dom/div
        (dom/props {:class "main-container"})
 
-       ;; Page header
+       ; Page header
        (dom/div
         (dom/props {:class "header"})
         (dom/h1 (dom/text "Electric Pong")))
 
-       ;; Game container
+       ; Game container
        (dom/div
         (dom/props {:class "pong-container"})
         (component/Instructions)
         (component/PongCourt)
-        (GameLoop)
+        (AsyncGameLoop)
 
         (dom/div
          (dom/props {:class "bci-area"})

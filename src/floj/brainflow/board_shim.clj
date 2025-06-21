@@ -1,4 +1,8 @@
 (ns floj.brainflow.board-shim
+  "This does not cover the entire BoardShim.java file, but it covers many of the most
+   important functions for basic development. In the future I plan to wrap all of the functions,
+   and it is still possible to call the native java wherever you would like in order to specify
+   custom params or call functions not covered here (such as temperature channels for example)."
   (:require [floj.brainflow.brainflow-input-params :as params])
   (:import [brainflow BoardShim BrainFlowPresets]))
 
@@ -226,6 +230,25 @@
                :or {preset BrainFlowPresets/DEFAULT_PRESET}}]
   (BoardShim/get_sampling_rate board-id preset))
 
+(defn get-eeg-channels
+  "Get EEG channels for the specified board"
+  [board-id]
+  (vec (BoardShim/get_eeg_channels board-id)))
+
+(defn get-accel-channels
+  "Get accelerometer channels for the specified board"
+  [board-id]
+  (vec (BoardShim/get_accel_channels board-id)))
+
+(defn get-gyro-channels
+  "Get gyroscope channels for the specified board"
+  [board-id]
+  (vec (BoardShim/get_gyro_channels board-id)))
+
+(defn get-ecg-channels
+  "Get ECG channels for the specified board"
+  [board-id
+   (vec (BoardShim/get_ecg_channels board-id))])
 
 
 

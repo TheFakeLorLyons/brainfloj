@@ -4,8 +4,6 @@
    #?(:clj [floj.state :as state])
    #?(:clj [floj.profiles :as profile])))
 
-(def rand-start
-  #?(:clj (Math/random) :cljs (js/Math.random)))
 (defn flex-abs [dx]
   #?(:clj (Math/abs dx) :cljs (js/Math.abs dx)))
 
@@ -14,59 +12,128 @@
           :current-screen :main-menu
           :selection-mode :selective}
    :game {:court {:width 800 :height 500}
-          :ball {:x 400 :y 250 :dx 5 :dy 3 :radius 10}
+          :ball {:x 400 :y 250 :dx 0 :dy 0 :radius 10}
           :player-paddle {:x 735 :y 200 :width 15 :height 100}
           :ai-paddle {:x 50 :y 200 :width 15 :height 100}
           :score {:player 0 :ai 0}
           :playing? false
           :training-mode? false
           :current-training nil}
-   :bci  {:confidence {:up 0.0 :down 0.0}
+   :bci  {:confidence {:up 0.0 :down 0.0 :confidence 0.0
+                       :processing-mode "initialization" :fresh? false
+                       :age 0 :timestamp 0}
           :device-connected? false
-          :up-patterns []
-          :down-patterns []}
+          :running? false
+          :streaming? false
+          :matching? false
+          :incoming-data-queue []
+          :last-poll-time 0
+          :last-action-time 0
+          :last-consumer-update nil
+          :action-count 0
+          :user-profile {:name "default"}
+          :action-history []
+          :confidence-history []
+          :training-performance []
+          :threshold-analysis {}
+          :latest-output {}
+          :pipeline-channels {:channels {}
+                              :control-channels {}
+                              :multiplexers {}}
+          :pipeline-running? false  ; Add this
+          :pipeline-stats {:samples-received 0 :samples-processed 0
+                           :features-extracted 0 :confidence-calculated 0
+                           :outputs-generated 0 :errors 0 :pipeline-starts 0}}
    :keys-pressed #{}})
 
 (def state (atom default-state))
 
 (defn init-bci-state! []
   (try
-    (swap! state update :bci merge
+    (swap! state update-in :bci merge
            {:device-connected? false
+            :streaming? false
+            :matching? false
             :active-profile nil
             :match-interval nil
-            :confidence {:up 0.0 :down 0.0}
-            :threshold 0.05   ; Default confidence threshold
-            :sensitivity 0.5 ; Default movement sensitivity
+            :confidence {:up 0.0 :down 0.0 :confidence 0.0
+                         :processing-mode "initialization" :fresh? false
+                         :age 0 :timestamp 0}
+            :incoming-data-queue []
+            :threshold 0.15   ; Default confidence threshold
+            :sensitivity 0.5  ; Default movement sensitivity
+            :running? false
             :recording? false
             :current-category nil
-            :matching? false
             :pending-connect false
             :pending-disconnect false
             :pending-record nil
             :pending-stop-record false
-            :status-check-needed false})
+            :status-check-needed false
+            :last-poll-time 0
+            :last-action-time 0
+            :last-consumer-update nil
+            :action-count 0
+            :user-profile {:name "default"}
+            :action-history []
+            :confidence-history []
+            :training-performance []
+            :threshold-analysis {}
+            :latest-output {}
+            :pipeline-channels {:channels {}
+                                :control-channels {}
+                                :multiplexers {}}
+            :pipeline-running? false
+            :pipeline-stats {:samples-received 0 :samples-processed 0
+                             :features-extracted 0 :confidence-calculated 0
+                             :outputs-generated 0 :errors 0 :pipeline-starts 0}})
     (catch #?(:clj Exception :cljs :default) e
       (println "Error initializing BCI state:" e))))
+
+
+(defn reset-ball! []
+  "Reset ball to center with proper random trajectory"
+  (let [current-state @state
+        current-game (:game current-state)
+        {:keys [court]} (:game @state)
+        base-speed 6
+
+        ; Random angle between -60 and 60 degrees (in radians)
+        angle-degrees (+ -60 (rand 120)) ; -60 to +60 degrees
+        angle-radians (* angle-degrees (/ #?(:clj Math/PI :cljs js/Math.PI) 180))
+
+        ; Direction: 1 for right (toward player), -1 for left (toward AI)
+        ; Can be changed to always go right: (direction 1)
+        direction (if (and (= (:player (:score current-game)) 0)
+                           (= (:ai (:score current-game)) 0))
+                    1  ; Always go right, toward player on first serve
+                    (if (< (rand) 0.5) 1 -1))
+
+        ; cos is the horizontal component, sin gives us the vertical
+        base-dx (* base-speed #?(:clj (Math/cos angle-radians) :cljs (js/Math.cos angle-radians)))
+        base-dy (* base-speed #?(:clj (Math/sin angle-radians) :cljs (js/Math.sin angle-radians)))
+
+        ; Apply direction to horizontal component
+        dx (* direction base-dx)
+        dy base-dy
+
+        ; Could be changed to simulate 'height' above the table
+        current-radius (or (get-in @state [:game :ball :radius]) 10)]
+    (swap! state assoc-in [:game :ball]
+           {:x (/ (:width court) 2)
+            :y (/ (:height court) 2)
+            :dx dx
+            :dy dy
+            :radius current-radius})))
 
 (defn init-game-state! []
   (reset! state default-state)
   (init-bci-state!))
- 
-(defn reset-ball! []
-  (let [{:keys [court]} (:game @state)
-        direction (if (> rand-start 0.5) 1 -1)
-        current-radius (or (get-in @state [:game :ball :radius]) 10)]
-    (swap! state assoc-in [:game :ball]
-      {:x (/ (:width court) 2)
-       :y (/ (:height court) 2)
-       :dx (* 5 direction) ; Keep consistent speed at 5 
-       :dy (-> rand-start (* 4) (- 2))
-       :radius current-radius}))) 
 
 (defn start-game! []
   #?(:cljs
      (try
+       (reset-ball!)
        (swap! state assoc-in [:game :playing?] true)
        (js/console.log "Game started")
        (catch :default e
@@ -88,7 +155,6 @@
                       (assoc :keys-pressed keys-pressed)
                       (assoc :bci bci-state)))))
 
-
 (defn move-paddle! [direction]
   (let [{:keys [player-paddle]} (:game @state)
         {:keys [court]} (:game @state)
@@ -96,7 +162,7 @@
         new-y (case direction
                 :up (max 0 (- (:y player-paddle) speed))
                 :down (min (- (:height court) (:height player-paddle))
-                        (+ (:y player-paddle) speed))
+                           (+ (:y player-paddle) speed))
                 (:y player-paddle))]
     (swap! state assoc-in [:game :player-paddle :y] new-y)))
 
@@ -112,12 +178,25 @@
         new-y (case direction
                 :up (max 0 (- (:y ai-paddle) speed))
                 :down (min (- (:height court) (:height ai-paddle))
-                        (+ (:y ai-paddle) speed))
+                           (+ (:y ai-paddle) speed))
                 (:y ai-paddle))]
     (swap! state assoc-in [:game :ai-paddle :y] new-y)))
 
 (def max-ball-speed 10)
-(def min-ball-speed 3)
+(def min-ball-speed 8)
+
+(defn calculate-speed [dx dy]
+  "Calculate the actual speed (magnitude) from velocity components"
+  #?(:clj (Math/sqrt (+ (* dx dx) (* dy dy)))
+     :cljs (js/Math.sqrt (+ (* dx dx) (* dy dy)))))
+
+(defn normalize-velocity [dx dy target-speed]
+  "Normalize velocity components to maintain target speed"
+  (let [current-speed (calculate-speed dx dy)]
+    (if (> current-speed 0)
+      (let [scale (/ target-speed current-speed)]
+        [(* dx scale) (* dy scale)])
+      [target-speed 0])))
 
 (defn capped-speed [v]
   (cond
@@ -127,44 +206,59 @@
     (and (< v 0) (> v (- min-ball-speed))) (- min-ball-speed)
     :else v))
 
+(defn clamp-speed [dx dy]
+  "Ensure the ball speed stays within min/max bounds"
+  (let [current-speed (calculate-speed dx dy)]
+    (cond
+      (> current-speed max-ball-speed)
+      (normalize-velocity dx dy max-ball-speed)
+
+      (< current-speed min-ball-speed)
+      (normalize-velocity dx dy min-ball-speed)
+
+      :else [dx dy])))
+
 (defn handle-paddle-collision [ball paddle is-player?]
-  (let [ball-y (get-in ball [:y])
-        current-dx  (get-in ball [:dx])
-        current-dy (get-in ball [:dy])
+  "Handle paddle collision with proper angle calculation"
+  (let [ball-y (:y ball)
+        current-speed (calculate-speed (:dx ball) (:dy ball))
         paddle-center (+ (:y paddle) (/ (:height paddle) 2))
         hit-offset (- ball-y paddle-center)
+        ; Normalize to -1 to 1 range
         normalized-offset (/ hit-offset (/ (:height paddle) 2))
-        ; Allow more extreme angles (between -0.95 and 0.95 of max)
-        ; This makes some balls challenging but still possible
-        limited-offset (-> normalized-offset
-                         (max -0.95)
-                         (min 0.95))
-        ; Calculate new dx (horizontal speed)
+        ; Clamp to prevent extreme angles
+        clamped-offset (-> normalized-offset
+                           (max -0.8)
+                           (min 0.8))
+
+        ; Calculate new direction
         dx-direction (if is-player? -1 1)
-        ; Speed increases slightly on each hit for more challenge
-        dx-magnitude (-> (flex-abs current-dx)
-                       (+ 0.2)
-                       (capped-speed))
-        new-dx (* dx-direction dx-magnitude)
-        ; Calculate new dy (vertical speed)
-        ; Blend current dy with paddle influence
-        current-dy (get-in ball [:dy])
-        ; More paddle influence (40%) makes player skill more important
-        paddle-influence (* limited-offset max-ball-speed)
-        ; 60% current direction, 40% paddle influence
-        new-dy (capped-speed (+ (* 0.6 current-dy)
-                               (* 0.4 paddle-influence)))
-        ; Position the ball at the edge of the paddle
+
+        ; Increase speed slightly on each hit
+        new-speed (min max-ball-speed (+ current-speed 0.3))
+
+        ; Calculate angle based on where ball hits paddle
+        ; Map offset to angle range (-45 to 45 degrees)
+        max-angle (* 45 (/ #?(:clj Math/PI :cljs js/Math.PI) 180)) ; 45 degrees in radians
+        angle (* clamped-offset max-angle)
+
+        ; Calculate new velocity components
+        new-dx (* new-speed dx-direction #?(:clj (Math/cos angle) :cljs (js/Math.cos angle)))
+        new-dy (* new-speed #?(:clj (Math/sin angle) :cljs (js/Math.sin angle)))
+
+        ; Position ball at paddle edge
         new-x (if is-player?
-                (- (:x paddle) (get-in ball [:radius]))
-                (+ (:x paddle) (:width paddle) (get-in ball [:radius])))]
+                (- (:x paddle) (:radius ball))
+                (+ (:x paddle) (:width paddle) (:radius ball)))]
+
     {:x new-x
      :y ball-y
      :dx new-dx
      :dy new-dy
-     :radius (get-in ball [:radius])}))
+     :radius (:radius ball)}))
 
 (defn update-ball! []
+  "Updated ball physics with proper speed handling"
   (let [game-state (:game @state)
         {:keys [ball player-paddle ai-paddle court score]} game-state
         {:keys [x y dx dy radius]} ball
@@ -177,35 +271,42 @@
                  (>= new-y (- (:height court) radius)) (- (flex-abs dy))
                  :else dy)
 
+        ; Apply speed clamping to maintain consistent speed
+        [clamped-dx clamped-dy] (clamp-speed dx new-dy)
+
+        ; Update positions with clamped velocities
+        final-new-x (+ x clamped-dx)
+        final-new-y (+ y clamped-dy)
+
         ; Initial state before paddle collision
         ball-after-collision
         (cond
           ; Player paddle collision (right side)
-          (and (>= new-x (- (:x player-paddle) radius))
-            (<= new-x (+ (:x player-paddle) (:width player-paddle) radius))
-            (>= (+ new-y radius) (:y player-paddle))
-            (<= (- new-y radius) (+ (:y player-paddle) (:height player-paddle))))
+          (and (>= final-new-x (- (:x player-paddle) radius))
+               (<= final-new-x (+ (:x player-paddle) (:width player-paddle) radius))
+               (>= (+ final-new-y radius) (:y player-paddle))
+               (<= (- final-new-y radius) (+ (:y player-paddle) (:height player-paddle))))
           (handle-paddle-collision
-            {:x new-x :y new-y :dx dx :dy new-dy :radius radius}
-            player-paddle
-            true)
+           {:x final-new-x :y final-new-y :dx clamped-dx :dy clamped-dy :radius radius}
+           player-paddle
+           true)
 
           ; AI paddle collision (left side)
-          (and (<= new-x (+ (:x ai-paddle) (:width ai-paddle) radius))
-            (>= new-x (- (:x ai-paddle) radius))
-            (>= (+ new-y radius) (:y ai-paddle))
-            (<= (- new-y radius) (+ (:y ai-paddle) (:height ai-paddle))))
+          (and (<= final-new-x (+ (:x ai-paddle) (:width ai-paddle) radius))
+               (>= final-new-x (- (:x ai-paddle) radius))
+               (>= (+ final-new-y radius) (:y ai-paddle))
+               (<= (- final-new-y radius) (+ (:y ai-paddle) (:height ai-paddle))))
           (handle-paddle-collision
-            {:x new-x :y new-y :dx dx :dy new-dy :radius radius}
-            ai-paddle
-            false)
+           {:x final-new-x :y final-new-y :dx clamped-dx :dy clamped-dy :radius radius}
+           ai-paddle
+           false)
 
           ; No paddle collision
           :else
-          {:x new-x
-           :y new-y
-           :dx dx
-           :dy new-dy
+          {:x final-new-x
+           :y final-new-y
+           :dx clamped-dx
+           :dy clamped-dy
            :radius radius})
 
         ; Scoring logic
@@ -217,6 +318,7 @@
                              [(update score :ai inc) true]
 
                              :else [score false])]
+
     (if reset?
       (do
         (swap! state assoc-in [:game :score] new-score)
@@ -247,7 +349,7 @@
         (swap! state update-in [:game :ball :speed-x] -)
         (when (>= (get-in @state [:game :score :player]) 5)
           (e/client
-            (js/alert "You win!"))
+           (js/alert "You win!"))
           (stop-game!)
           (reset-game!)))
 
@@ -277,17 +379,17 @@
 
     ; Check player paddle collision
     (when (and (<= (- ball-x radius) player-x2)
-            (>= ball-x (:x player-paddle))
-            (>= ball-y player-y1)
-            (<= ball-y player-y2))
+               (>= ball-x (:x player-paddle))
+               (>= ball-y player-y1)
+               (<= ball-y player-y2))
       (swap! state update-in [:game :ball :speed-x] #(Math/abs %))
       (swap! state update-in [:game :ball :speed-x] #(+ % 0.5)))
 
     ; Check AI paddle collision
     (when (and (>= (+ ball-x radius) ai-x1)
-            (<= ball-x (+ ai-x1 (:width ai-paddle)))
-            (>= ball-y ai-y1)
-            (<= ball-y ai-y2))
+               (<= ball-x (+ ai-x1 (:width ai-paddle)))
+               (>= ball-y ai-y1)
+               (<= ball-y ai-y2))
       (swap! state update-in [:game :ball :speed-x] #(- (Math/abs %)))
       (swap! state update-in [:game :ball :speed-x] #(- % 0.5)))))
 
@@ -314,81 +416,6 @@
    :clj
    (defn handle-key-down [e]
      (println "Key down event - server-side implementation")))
-
-#_#?(:cljs
-    (defn game-loop-tick!
-      "Process one frame of the game logic"
-      []
-      (let [{:keys [ball player-paddle ai-paddle court]} (:game @state)]
-       ;; Update ball position
-        (swap! state update-in [:game :ball :x] + (get-in ball [:velocity :x]))
-        (swap! state update-in [:game :ball :y] + (get-in ball [:velocity :y]))
-
-       ;; Ball collision with top/bottom walls
-        (when (or (<= (- (:y ball) (:radius ball)) 0)
-                  (>= (+ (:y ball) (:radius ball)) (:height court)))
-          (swap! state update-in [:game :ball :velocity :y] -))
-
-       ;; Ball collision with paddles
-        (let [updated-ball (get-in @state [:game :ball])]
-         ;; Player paddle collision
-          (when (and (<= (- (:x updated-ball) (:radius updated-ball)) (+ (:x player-paddle) (:width player-paddle)))
-                     (>= (- (:x updated-ball) (:radius updated-ball)) (:x player-paddle))
-                     (>= (+ (:y updated-ball) (:radius updated-ball)) (:y player-paddle))
-                     (<= (- (:y updated-ball) (:radius updated-ball)) (+ (:y player-paddle) (:height player-paddle))))
-            (swap! state update-in [:game :ball :velocity :x] -)
-           ;; Slightly randomize y velocity on paddle hit for variety
-            (let [random-factor (- (rand) 0.5)]
-              (swap! state update-in [:game :ball :velocity :y] + random-factor)))
-
-         ;; AI paddle collision
-          (when (and (>= (+ (:x updated-ball) (:radius updated-ball)) (:x ai-paddle))
-                     (<= (+ (:x updated-ball) (:radius updated-ball)) (+ (:x ai-paddle) (:width ai-paddle)))
-                     (>= (+ (:y updated-ball) (:radius updated-ball)) (:y ai-paddle))
-                     (<= (- (:y updated-ball) (:radius updated-ball)) (+ (:y ai-paddle) (:height ai-paddle))))
-            (swap! state update-in [:game :ball :velocity :x] -)
-           ;; Slightly randomize y velocity on paddle hit
-            (let [random-factor (- (rand) 0.5)]
-              (swap! state update-in [:game :ball :velocity :y] + random-factor))))
-
-       ;; Simple AI paddle movement
-        (let [updated-ball (get-in @state [:game :ball])
-              ai-y (+ (:y ai-paddle) (/ (:height ai-paddle) 2))
-              ball-y (:y updated-ball)
-              ai-speed 3]
-          (cond
-            (< ai-y (- ball-y 10))
-            (swap! state update-in [:game :ai-paddle :y] + ai-speed)
-
-            (> ai-y (+ ball-y 10))
-            (swap! state update-in [:game :ai-paddle :y] - ai-speed)))
-
-       ;; Keep AI paddle within court bounds
-        (swap! state update-in [:game :ai-paddle :y]
-               (fn [y] (max 0 (min (- (:height court) (:height ai-paddle)) y))))
-
-       ;; Check if ball goes out of bounds (scoring)
-        (let [updated-ball (get-in @state [:game :ball])]
-          (cond
-           ;; AI scores
-            (<= (:x updated-ball) 0)
-            (do
-              (swap! state update-in [:game :score :ai] inc)
-              (swap! state assoc-in [:game :ball]
-                     {:x 300
-                      :y 200
-                      :radius 10
-                      :velocity {:x -3 :y 2}}))
-
-           ;; Player scores
-            (>= (:x updated-ball) (:width court))
-            (do
-              (swap! state update-in [:game :score :player] inc)
-              (swap! state assoc-in [:game :ball]
-                     {:x 300
-                      :y 200
-                      :radius 10
-                      :velocity {:x 3 :y 2}})))))))
 
 #?(:cljs
    (defn handle-key-up [e]
@@ -434,8 +461,6 @@
      (reset! state default-state)
      (println "Game initialized!")))
 
-; experimental
-
 (def paddle-speed 10)
 (def paddle-threshold 0.05) ; Confidence threshold for BCI movement
 
@@ -467,81 +492,10 @@
           up-confidence (get bci-confidence :up 0.0)
           down-confidence (get bci-confidence :down 0.0)]
       (when (> up-confidence paddle-threshold)
-        (move-paddle! :up))
+        (brain-move-paddle! :up))
       (when (> down-confidence paddle-threshold)
-        (move-paddle! :down)))
+        (brain-move-paddle! :down)))
 
-    ; Ball movement (x, y positions)
-    (let [{:keys [x y dx dy radius]} ball
-          new-x (+ x dx)
-          new-y (+ y dy)
+    (update-ball!)
 
-          ; Detect wall collisions (top/bottom)
-          hit-top? (<= new-y radius)
-          hit-bottom? (>= new-y (- (:height court) radius))
-
-          ; Detect paddle collisions
-          left-paddle-x (+ (:x ai-paddle) (:width ai-paddle))
-          right-paddle-x (:x player-paddle)
-
-          ; Check if ball hits player paddle
-          hit-player-paddle? (and (>= (+ new-x radius) right-paddle-x)
-                                  (<= (- new-x radius) (+ right-paddle-x (:width player-paddle)))
-                                  (>= (+ new-y radius) (:y player-paddle))
-                                  (<= (- new-y radius) (+ (:y player-paddle) (:height player-paddle))))
-
-          ; Check if ball hits AI paddle
-          hit-ai-paddle? (and (<= (- new-x radius) left-paddle-x)
-                              (>= (+ new-x radius) (:x ai-paddle))
-                              (>= (+ new-y radius) (:y ai-paddle))
-                              (<= (- new-y radius) (+ (:y ai-paddle) (:height ai-paddle))))
-
-          ; Calculate new velocities based on collisions
-          new-dx (cond
-                   hit-player-paddle? (- (Math/abs dx)) ; Reverse x direction with same speed
-                   hit-ai-paddle? (Math/abs dx)         ; Reverse x direction with same speed
-                   :else dx)
-
-          new-dy (cond
-                   hit-top? (Math/abs dy)        ; Bounce off top
-                   hit-bottom? (- (Math/abs dy)) ; Bounce off bottom
-                   :else dy)
-
-          ; Calculate final new position with updated velocities
-          final-new-x (+ x new-dx)
-          final-new-y (+ y new-dy)]
-
-      ; Update ball position and velocity
-      (swap! state assoc-in [:game :ball]
-             {:x final-new-x
-              :y final-new-y
-              :dx new-dx
-              :dy new-dy
-              :radius radius})
-
-      ; Simple AI paddle movement - follows the ball
-      (let [ai-paddle-y (:y ai-paddle)
-            ai-paddle-height (:height ai-paddle)
-            ai-paddle-center (+ ai-paddle-y (/ ai-paddle-height 2))
-            ball-y new-y
-            ai-speed 3 ; Slower than player for fairness
-            ai-move-dir (cond
-                          (< ai-paddle-center ball-y) ai-speed     ; Move down
-                          (> ai-paddle-center ball-y) (- ai-speed) ; Move up
-                          :else 0)                                 ; Don't move
-            new-ai-y (-> ai-paddle-y
-                         (+ ai-move-dir)
-                         (max 0)
-                         (min (- (:height court) ai-paddle-height)))]
-        (swap! state assoc-in [:game :ai-paddle :y] new-ai-y))
-
-      ; Check for scoring (ball off sides)
-      (when (< final-new-x 0)
-        ; Player scores
-        (swap! state update-in [:game :score :player] inc)
-        (reset-ball!))
-
-      (when (> final-new-x (:width court))
-        ; AI scores
-        (swap! state update-in [:game :score :ai] inc)
-        (reset-ball!)))))
+    (move-ai-paddle!)))

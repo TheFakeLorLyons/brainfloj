@@ -1,4 +1,7 @@
 (ns floj.stream-manager
+  "I found I had to change the format of raw data to work with it easier, and this namespace
+   provides helper functions to make that a bit easier. I will release documentation and videos
+   in the future to demonstrate more specifically how some of these and other functions work."
   (:require [floj.api :as api]
             [floj.brainflow.board-shim :as brainflow]
             [floj.state :as state])

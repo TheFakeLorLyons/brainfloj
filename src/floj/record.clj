@@ -1,4 +1,12 @@
 (ns floj.record
+  "Containing the logic for generic recording functionality. Wave-signature recording is a specialized
+   type of recording that uses this same module. The eeg visualizer also uses this same basic recording
+   functionality. I'd recommend using this if you plan on making simple eeg applications using this library.
+   It uses 'write-metadata' from the lor.clj namespace when the recording begins with 'start-recording'. This
+   also uses the stream_manager.clj file and calibration.clj file routinely for formatting the raw data, and
+   on the fly calibration. Most of the timings are customizable, but could probably be made more user friendly.
+   The recordings by default print the output to the command line but can easily be commented out in the
+   'record-loop!' function (lines 179 and 180 as I write this)."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [floj.brainflow.board-shim :as brainflow]

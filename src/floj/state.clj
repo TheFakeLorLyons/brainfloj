@@ -1,4 +1,7 @@
 (ns floj.state
+  "Using mount, state is initialized every session. Params is presented simply as an example of what
+   will be necessary to connect to your device other than the device name and board-id which can be found
+   in src/floj/brainflow/board_ids.clj."
   (:require [mount.core :as mount :refer [defstate]]
             [clojure.edn :as edn]
             [clojure.java.io :as io])

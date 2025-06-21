@@ -1,4 +1,11 @@
 (ns brain-pong.signature
+  "This namespace is a work in progress, and contains lots of currently unimplemented code.
+   It is intended to be the interface between the rest of brainfloj and applications built
+   upon it. Currently it is set up for comparisons between live signals and pre-recorded 
+   wave-signatures/categories saved via the brainfloj CLI. In the future will feature more 
+   robust signature/category feature comparisons, and more live update functionality. 
+   I have noted in the docstrings which functions are currently being used; and eventually 
+   I plan on incorporating all of the functions included."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.pprint :as pprint]
@@ -22,7 +29,9 @@
 (def live-signature-buffer (atom {}))
 
 (defn get-or-create-category-state
-  "Get or create category state with all needed components"
+  "Get or create category state with all needed components.
+   
+   Called in 'get-category-lock' and 'should-attempt-category-update?' below."
   [category]
   (let [current-state @category-state]
     (if (contains? current-state category)
@@ -35,12 +44,17 @@
         new-state))))
 
 (defn get-category-lock
-  "Get the ReentrantLock for a specific category"
+  "Get the ReentrantLock for a specific category.
+   
+   Called in 'update-category-thread-safe!' below."
   [category]
   (:lock (get-or-create-category-state category)))
 
 (defn should-attempt-category-update?
-  "Circuit breaker per category with recovery mechanism"
+  "Circuit breaker per category with recovery mechanism.
+   
+   -NOT CALLED IN THIS NAMESPACE-
+   Called in 'start-signature-enhancement-background!' in the Pong example."
   [category]
   (let [category-info (get-or-create-category-state category)
         failures (:failures category-info)
@@ -72,7 +86,9 @@
         result))))
 
 (defn record-category-update-result
-  "Track success/failure per category in consolidated state"
+  "Track success/failure per category in consolidated state.
+   
+   Called in 'update-category-thread-safe!' below."
   [category success?]
   (let [current-time (System/currentTimeMillis)]
     (if success?
@@ -92,7 +108,9 @@
                "Last update:" (:last-update updated-state)))))
 
 (defn should-capture-live-signature?
-  "Determine if current confidence is high enough to capture a live signature"
+  "Currently unimplemented...
+   
+   Determine if current confidence is high enough to capture a live signature."
   [confidence-data game-context category-intelligence]
   (let [max-confidence (max (:up confidence-data) (:down confidence-data))
         confidence-gap (Math/abs (- (:up confidence-data) (:down confidence-data)))
@@ -109,7 +127,10 @@
          (get game-context :ball-position-validates-intent false))))
 
 (defn should-enhance-signature?
-  "Determine if current confidence is high enough to enhance signature live"
+  "Currently unimplemented, 
+      but called in 'capture-live-enhancement!' below.
+   
+   Determine if current confidence is high enough to enhance signature live."
   [confidence-data game-context category-intelligence]
   (let [max-confidence (max (:up confidence-data) (:down confidence-data))
         confidence-gap (Math/abs (- (:up confidence-data) (:down confidence-data)))
@@ -127,7 +148,10 @@
          (get game-context :ball-position-validates-intent true))))
 
 (defn enhance-category-live!
-  "Enhance category.edn with live high-confidence data using your existing structure"
+  "Currently unimplemented, 
+      but called in 'capture-live-enhancement!' below.
+   
+   Enhance category.edn with live high-confidence data using your existing structure."
   [category direction samples]
   (try
     (let [category-file (lexi/load-category category)
@@ -169,7 +193,11 @@
       (println "Error enhancing category with live data:" (.getMessage e)))))
 
 (defn capture-live-enhancement!
-  "Capture high-confidence sample for live signature enhancement - called in BCI integration"
+  "Currently unimplemented, 
+      but meant to be called in 'Process-live-training-integration!',
+      in bci-integration, in the Pong example.
+
+   Capture high-confidence sample for live signature enhancement."
   [category confidence-data eeg-sample game-context]
   (let [timestamp (System/currentTimeMillis)
         category-intelligence (lexi/load-category category)]
@@ -191,7 +219,9 @@
             (enhance-category-live! category dominant-direction samples)))))))
 
 (defn load-wave-signatures-from-dir
-  "Load signature files from the specified category directory"
+  "Load signature files from the specified category directory.
+   
+   Called in 'continue-with-matching' below."
   [dir-path]
   (try
     (println "Loading wave signatures from" dir-path)
@@ -224,7 +254,9 @@
       [])))
 
 (defn compute-time-domain-stats
-  "Compute basic time domain statistics for EEG data using BrainFlow's native implementation.
+  "Currently unimplemented...
+   
+   Compute basic time domain statistics for EEG data using BrainFlow's native implementation.
       raw-data is a sequence of samples, where each sample is a vector of channel values."
   [raw-data]
   (try
@@ -235,7 +267,9 @@
       {:channel-stats []})))
 
 (defn compute-frequency-bands
-  "Compute frequency band powers for EEG data using BrainFlow's FFT capabilities"
+  "Currently unimplemented...
+   
+   Compute frequency band powers for EEG data using BrainFlow's FFT capabilities"
   [raw-data sampling-rate]
   (when (seq raw-data)
     (try
@@ -246,7 +280,9 @@
         {:delta 0.0, :theta 0.0, :alpha 0.0, :beta 0.0, :gamma 0.0, :thinking 0.0}))))
 
 (defn compute-wavelet-features
-  "Compute wavelet features for EEG data using BrainFlow's wavelet transform.
+  "Currently unimplemented...
+   
+   Compute wavelet features for EEG data using BrainFlow's wavelet transform.
       raw-data is a sequence of samples, where each sample is a vector of channel values.
       sampling-rate is the number of samples per second."
   [raw-data sampling-rate]
@@ -260,7 +296,10 @@
       {:coefficients [], :energies {}})))
 
 (defn compute-time-domain-similarity
-  "Compare time domain features between current data and signature"
+  "Currently unimplemented,
+      but called in 'calculate-signature-similarity' below.
+   
+   Compare time domain features between current data and signature."
   [current-features signature-features]
   (try
     (if (or (nil? current-features) (nil? signature-features))
@@ -304,7 +343,10 @@
       0.0)))
 
 (defn compute-frequency-similarity
-  "Compare frequency domain features between current data and signature"
+  "Currently unimplemented, 
+      but called in 'calculate-signature-similarity' below.
+   
+   Compare frequency domain features between current data and signature."
   [current-freq signature-freq]
   (try
     (if (or (nil? current-freq) (nil? signature-freq))
@@ -359,7 +401,10 @@
       0.0)))
 
 (defn compute-wavelet-similarity
-  "Compare wavelet features between current data and signature"
+  "Currently unimplemented, 
+      but called in 'calculate-signature-similarity' below.
+   
+   Compare wavelet features between current data and signature."
   [current-wavelet signature-wavelet]
   (try
     (if (or (nil? current-wavelet) (nil? signature-wavelet))
@@ -391,7 +436,10 @@
       0.0)))
 
 (defn compute-spatial-similarity
-  "Compare spatial correlation features between current data and signature"
+  "Currently unimplemented, 
+      but called in 'calculate-signature-similarity' below.
+   
+   Compare spatial correlation features between current data and signature"
   [current-corr signature-corr]
   (try
     (if (or (nil? current-corr) (nil? signature-corr))
@@ -423,8 +471,53 @@
       (println "Error computing spatial similarity:" (.getMessage e))
       0.0)))
 
+(defn compute-coherence-similarity
+  "Currently unimplemented, 
+      but called in 'calculate-signature-similarity' below.
+   
+   Calculate similarity between coherence patterns"
+  [current-coherence template-coherence]
+  (try
+    (if (or (empty? current-coherence) (empty? template-coherence))
+      0.5 ; Default value if no coherence data
+
+      (let [; Create maps for easier lookup
+            current-map (reduce (fn [acc item]
+                                  (assoc acc (:channels item) (:correlation item)))
+                                {}
+                                current-coherence)
+
+            template-map (reduce (fn [acc item]
+                                   (assoc acc (:channels item) (:correlation item)))
+                                 {}
+                                 template-coherence)
+
+            ; Find common channel pairs
+            all-pairs (into #{} (concat (keys current-map) (keys template-map)))
+
+            ; Calculate differences
+            differences (for [pair all-pairs
+                              :let [current-val (get current-map pair 0.0)
+                                    template-val (get template-map pair 0.0)
+                                    diff (Math/abs (- current-val template-val))]]
+                          diff)
+
+            ; Average difference
+            avg-diff (if (pos? (count differences))
+                       (/ (reduce + differences) (count differences))
+                       1.0)
+
+            ; Convert to similarity
+            similarity (/ 1.0 (+ 1.0 avg-diff))]
+        similarity))
+    (catch Exception e
+      (println "Error calculating coherence similarity:" (.getMessage e))
+      0.5)))
+
 (defn gradient-field
-  "Compute a gradient field matrix from normalized multi-channel EEG data.
+  "Currently unimplemented...
+   
+   Compute a gradient field matrix from normalized multi-channel EEG data.
    Each off-diagonal element contains the vector direction and magnitude of the difference between two channels.
    Diagonal elements are zero-vectors with zero magnitude."
   [normalized-channels]
@@ -468,7 +561,10 @@
         nil))))
 
 (defn normalize-band-powers
-  "Normalize band powers to create distribution ratios"
+  "Currently unimplemented,
+      but called in 'extract-comprehensive-features' below.
+   
+   Normalize band powers to create distribution ratios"
   [band-powers]
   (let [total-power (apply + (vals band-powers))]
     (if (> total-power 0)
@@ -476,12 +572,14 @@
       band-powers)))
 
 (defn extract-features-from-eeg-data
-  "Extract features using calibration module's robust band power extraction"
+  "Extract features using calibration module's robust band power extraction.
+   
+   Called in 'get-smoothed-features' below, and the pong example directly."
   [eeg-data sampling-rate]
   (try
-    (println "=== ROBUST FEATURE EXTRACTION (using calibration module) ===")
-    (println "Input data type:" (type eeg-data))
-    (println "Sample count:" (count eeg-data))
+    ;(println "=== EEG FEATURE EXTRACTION ===")
+    ;(println "Input data type:" (type eeg-data))
+    ;(println "Sample count:" (count eeg-data))
 
     (when (seq eeg-data)
       (let [; Extract EEG arrays from the data structure
@@ -489,18 +587,11 @@
             ; Flatten all samples into one continuous dataset
             all-samples (vec (apply concat eeg-samples))
 
-            ; Debug info
-            _ (println "Total samples extracted:" (count all-samples))
-
             ; Filter out any invalid samples
             valid-samples (filterv #(and (sequential? %)
                                          (every? number? %)
                                          (= (count %) 5)) ; Ensure 5 channels
                                    all-samples)
-
-            _ (println "Valid samples after filtering:" (count valid-samples))
-            _ (when (seq valid-samples)
-                (println "First valid sample:" (first valid-samples)))
 
             ; Check minimum sample requirement
             _ (when (< (count valid-samples) 8)
@@ -532,7 +623,9 @@
       nil)))
 
 (defn extract-comprehensive-features
-  "Extract features that align with category intelligence structure"
+  "Currently unimplemented...
+   
+   Extract features that align with category intelligence structure"
   [eeg-data sampling-rate]
   (let [basic-features (extract-features-from-eeg-data eeg-data sampling-rate)]
     (when basic-features
@@ -541,8 +634,10 @@
               :triangulation-ready true
               :feature-timestamp (System/currentTimeMillis)}))))
 
-(defn calculate-band-power-similarity-fixed
-  "Calculate similarity between current and signature band powers"
+(defn calculate-band-power-similarity
+  "Calculate similarity between current and signature band powers.
+   
+   Called in 'continue-with-matching' below."
   [current-bands signature-bands]
   (try
     (let [bands [:delta :theta :alpha :beta :gamma :thinking]
@@ -580,71 +675,10 @@
       (println "Error calculating band power similarity:" (.getMessage e))
       0.0)))
 
-(defn compute-coherence-similarity
-  "Calculate similarity between coherence patterns"
-  [current-coherence template-coherence]
-  (try
-    (if (or (empty? current-coherence) (empty? template-coherence))
-      0.5 ; Default value if no coherence data
-
-      (let [; Create maps for easier lookup
-            current-map (reduce (fn [acc item]
-                                  (assoc acc (:channels item) (:correlation item)))
-                                {}
-                                current-coherence)
-
-            template-map (reduce (fn [acc item]
-                                   (assoc acc (:channels item) (:correlation item)))
-                                 {}
-                                 template-coherence)
-
-            ; Find common channel pairs
-            all-pairs (into #{} (concat (keys current-map) (keys template-map)))
-
-            ; Calculate differences
-            differences (for [pair all-pairs
-                              :let [current-val (get current-map pair 0.0)
-                                    template-val (get template-map pair 0.0)
-                                    diff (Math/abs (- current-val template-val))]]
-                          diff)
-
-            ; Average difference
-            avg-diff (if (pos? (count differences))
-                       (/ (reduce + differences) (count differences))
-                       1.0)
-
-            ; Convert to similarity
-            similarity (/ 1.0 (+ 1.0 avg-diff))]
-        similarity))
-    (catch Exception e
-      (println "Error calculating coherence similarity:" (.getMessage e))
-      0.5)))
-
-(defn calculate-band-power-similarity
-  "Calculate similarity between band power distributions"
-  [current-bands template-bands]
-  (try
-    (let [bands [:delta :theta :alpha :beta :gamma]
-
-          ; Calculate Euclidean distance
-          squared-diffs (for [band bands
-                              :let [current-val (get current-bands band 0.0)
-                                    template-val (get template-bands band 0.0)
-                                    diff (- current-val template-val)]]
-                          (* diff diff))
-
-          distance (Math/sqrt (reduce + squared-diffs))
-
-          ; Convert to similarity (0-1 range)
-          similarity (/ 1.0 (+ 1.0 distance))]
-
-      similarity)
-    (catch Exception e
-      (println "Error calculating band power similarity:" (.getMessage e))
-      0.5)))
-
 (defn calculate-signature-similarity
-  "Calculate comprehensive similarity between current EEG features and stored signature"
+  "Currently unimplemented...
+   
+   Calculate comprehensive similarity between current EEG features and stored signature"
   [current-features signature]
   (try
     ; Calculate similarity scores for each feature domain
@@ -699,7 +733,9 @@
       0.0)))
 
 (defn calculate-feature-distance
-  "Calculate distance between two feature sets (alternative to similarity)"
+  "Currently unimplemented...
+   
+   Calculate distance between two feature sets."
   [features1 features2]
   (try
     (let [; Calculate band power distance
@@ -759,7 +795,9 @@
       0.0)))
 
 (defn calculate-golden-tensor-affinity
-  "Calculate affinity to golden tensor patterns"
+  "Calculate similarity to golden tensor patterns.
+   
+   Called in 'calculate-triangulation-score' below."
   [current-bands golden-ratios]
   (try
     (let [common-bands (filter #(and (contains? current-bands %)
@@ -782,7 +820,9 @@
       0.0)))
 
 (defn calculate-ratio-similarity
-  "Compare current band distribution to signature ratios"
+  "Compare current band distribution to signature ratios.
+   
+   Called in 'calculate-triangulation-score' below."
   [current-bands reference-ratios]
   (try
     (let [common-bands (filter #(and (contains? current-bands %)
@@ -804,7 +844,9 @@
       0.0)))
 
 (defn calculate-calibration-alignment
-  "Calculate alignment with calibration factors"
+  "Calculate alignment with calibration factors.
+   
+   Called in 'calculate-triangulation-score' below."
   [current-bands calibration-factors]
   (try
     (let [common-bands (filter #(and (contains? current-bands %)
@@ -827,7 +869,9 @@
       0.5)))
 
 (defn calculate-confidence
-  "Calculate confidence using category intelligence metrics"
+  "Currently unimplemented...
+   
+   Calculate confidence using category intelligence metrics"
   [scores category-intelligence]
   (try
     (let [intelligence-metrics (get-in category-intelligence [:summary :all :intelligence-metrics])
@@ -855,13 +899,13 @@
           up (* up-score separation-multiplier)
           down (* down-score separation-multiplier)]
 
-      (println "Enhanced confidence calculation:")
-      (println "  Separation score:" separation-score)
-      (println "  Triangulation quality:" triangulation-quality)
-      (println "  Dynamic threshold:" dynamic-threshold)
-      (println "  Confidence gap:" confidence-gap)
-      (println "  Separation multiplier:" separation-multiplier)
-      (println "  Enhanced scores - Up:" up "Down:" down)
+      ;(println "Enhanced confidence calculation:")
+      ;(println "  Separation score:" separation-score)
+      ;(println "  Triangulation quality:" triangulation-quality)
+      ;(println "  Dynamic threshold:" dynamic-threshold)
+      ;(println "  Confidence gap:" confidence-gap)
+      ;(println "  Separation multiplier:" separation-multiplier)
+      ;(println "  Enhanced scores - Up:" up "Down:" down)
 
       {:up up
        :down down
@@ -873,7 +917,10 @@
       scores)))
 
 (defn calculate-confidence-boost
-  "Calculate how much to boost confidence based on live samples"
+  "Currently unimplemented, but called in 'update-signature-with-live-data!' below.
+      -> 'update-signature-with-live-data!' is not yet implemented...
+   
+   Calculate how much to boost confidence based on live samples"
   [samples existing-signature]
   (let [avg-live-confidence (/ (reduce + (map :quality-score samples)) (count samples))
         existing-confidence (get-in existing-signature [:confidence-metrics :avg-confidence] 0.3)
@@ -881,7 +928,10 @@
     (max 0.0 boost-factor)))
 
 (defn update-summary-with-live-data
-  "Update category summary with live intelligence data"
+  "Currently unimplemented, but called in 'update-category-from-live-data!' below.
+      -> 'update-category-from-live-data!' is not yet implemented...
+
+   Update category summary with live intelligence data"
   [existing-summary live-intelligence]
   (let [current-all (get existing-summary :all {})
         current-metrics (get current-all :intelligence-metrics {})
@@ -891,8 +941,11 @@
            :all (assoc current-all :intelligence-metrics updated-metrics)
            :live-updated (System/currentTimeMillis))))
 
-(defn calculate-live-intelligence-metrics
-  "Calculate enhanced intelligence metrics from live data"
+(defn calculate-live-metrics
+  "Currently unimplemented, but called in 'update-category-from-live-data!' below.
+      -> 'update-category-from-live-data!' is not yet implemented...
+
+   Calculate bci performance metrics from live data."
   [up-signature down-signature live-samples]
   (try
     (let [; Extract existing metrics
@@ -936,7 +989,9 @@
        :live-enhanced false})))
 
 (defn update-category!
-  "Update category.edn with new performance data and intelligence metrics - FIXED FILE RENAME"
+  "Update category.edn with new performance data and intelligence metrics.
+   
+   Called in 'perform-category-update-with-timeout' below."
   [category confidence-data eeg-sample game-context recent-performance]
   (try
     ; Add safety checks at the beginning
@@ -1179,7 +1234,9 @@
       {:success false :error (.getMessage e)})))
 
 (defn perform-category-update-with-timeout
-  "Perform the actual category update with internal timeout"
+  "Perform the actual category update with internal timeout.
+   
+   Called in 'update-category-thread-safe!' below."
   [category confidence-data eeg-sample game-context recent-performance timeout-ms]
   (let [start-time (System/currentTimeMillis)
         deadline (+ start-time timeout-ms)]
@@ -1241,8 +1298,14 @@
         (let [elapsed (- (System/currentTimeMillis) start-time)]
           (println "❌ Category update error after" elapsed "ms:" (.getMessage e))
           {:success false :error (.getMessage e) :elapsed-ms elapsed})))))
+
 (defn update-category-thread-safe!
-  "Per-category ReentrantLock with timeout - ROBUST VERSION"
+  "Main category update function, per-category ReentrantLock with timeout.
+   
+   This is called in apps built upon brainfloj to enhance the category.edn files
+   with live streamed information when appropriate.
+      Currently called in the Pong example in 'start-signature-enhancement-background!'
+      and 'match-brain-activity-server'."
   [category confidence-data eeg-sample game-context recent-performance]
   (println "Starting thread-safe update for category:" category)
 
@@ -1332,22 +1395,25 @@
         {:success false :error (.getMessage e)}))))
 
 (defn update-category-from-live-data!
-  "Update category.edn based on live signature updates"
+  "Currently unimplemented, but called in 'update-signature-with-live-data!' below.
+       -> 'update-signature-with-live-data!' is itself unimplemented thus far
+
+   Update category.edn based on live signature updates"
   [category]
   (try
     (let [existing-category (lexi/load-category category)
           ; Load updated signature data
           up-signature (lexi/load-signature-data category "up")
           down-signature (lexi/load-signature-data  category "down")
-          ; Calculate new intelligence metrics with live data
-          live-intelligence (calculate-live-intelligence-metrics up-signature down-signature)
+          ; Calculate new bci performance metrics with live data
+          live-metrics (calculate-live-metrics up-signature down-signature)
           ; Update category with live intelligence
           updated-category (merge existing-category
-                                  {:live-intelligence live-intelligence
+                                  {:live-intelligence live-metrics
                                    :last-live-update (System/currentTimeMillis)
                                    :summary (update-summary-with-live-data
                                              (:summary existing-category)
-                                             live-intelligence)})]
+                                             live-metrics)})]
       ; Save updated category
       (with-open [w (io/writer existing-category)]
         (binding [*print-length* nil *print-level* nil]
@@ -1357,7 +1423,9 @@
       (println "Error updating category with live data:" (.getMessage e)))))
 
 (defn calculate-direction-confidence
-  "Calculate confidence for a specific direction with direction-specific data"
+  "Currently unimplemented...
+   
+   Calculate confidence for a specific direction with direction-specific data"
   [current-features category-intelligence direction]
   (try
     (let [direction-key (keyword direction)
@@ -1411,11 +1479,11 @@
           calibration-confidence (* calibration-boost 0.3)
           final-confidence (+ base-confidence calibration-confidence)]
 
-      (println (str "Direction " direction " confidence calculation:"))
-      (println "  Similarity score:" (format "%.4f" similarity-score))
-      (println "  Calibration boost:" (format "%.4f" calibration-boost))
-      (println "  Final confidence:" (format "%.4f" final-confidence))
-      (println "  Using direction-specific data:" (some? direction-data))
+      ;(println (str "Direction " direction " confidence calculation:"))
+      ;(println "  Similarity score:" (format "%.4f" similarity-score))
+      ;(println "  Calibration boost:" (format "%.4f" calibration-boost))
+      ;(println "  Final confidence:" (format "%.4f" final-confidence))
+      ;(println "  Using direction-specific data:" (some? direction-data))
 
       (max 0.0 final-confidence))
     (catch Exception e
@@ -1423,7 +1491,10 @@
       0.0)))
 
 (defn calculate-triangulation-score
-  "Calculate similarity using triangulation analysis from category intelligence"
+  "Currently unimplemented,
+      but called in 'process-live-sample' below, which is also yet to be implemented.
+   
+   Calculate similarity using triangulation analysis from category intelligence."
   [current-features category-intelligence direction]
   (try
     (let [triangulation-data (get-in category-intelligence [:summary :all :triangulation-analysis])
@@ -1462,8 +1533,57 @@
       (println "Error in triangulation scoring:" (.getMessage e))
       0.0)))
 
+   (defn calculate-recent-performance-server
+     "Currently unimplemented...
+      
+      Server-side calculation of recent performance metrics"
+     [profile-name category]
+     (try
+       (let [current-time (System/currentTimeMillis)
+             recent-window 30000 ; 30 seconds
+             
+             ; Get action history from state (you'll need to track this server-side)
+             action-history (get-in @state/state [:bci :action-history profile-name] [])
+             
+             ; Filter recent actions
+             recent-actions (filter #(< (- current-time (:timestamp %)) recent-window) action-history)
+             
+             total-actions (count recent-actions)
+             successful-actions (count (filter :successful recent-actions))
+             assisted-actions (count (filter :assisted recent-actions))
+             natural-actions (- successful-actions assisted-actions)
+             
+             success-rate (if (> total-actions 0) 
+                           (/ successful-actions total-actions) 
+                           0.5)
+             
+             ; Calculate additional server-side metrics
+             confidence-history (get-in @state/state [:bci :confidence-history profile-name] [])
+             recent-confidences (filter #(< (- current-time (:timestamp %)) recent-window) confidence-history)
+             
+             avg-confidence (if (seq recent-confidences)
+                             (/ (reduce + (map :max-confidence recent-confidences)) 
+                                (count recent-confidences))
+                             0.3)]
+         
+         {:success-rate success-rate
+          :total-actions total-actions
+          :successful-actions successful-actions
+          :assisted-actions assisted-actions
+          :natural-actions natural-actions
+          :avg-confidence avg-confidence
+          :recent-sample-count (count recent-confidences)})
+       
+       (catch Exception e
+         (println "Error calculating server performance:" (.getMessage e))
+         {:success-rate 0.5 :total-actions 0 :successful-actions 0 
+          :assisted-actions 0 :natural-actions 0 :avg-confidence 0.3})))
+
 (defn process-live-sample
-  "Process a live sample into signature format"
+  "Currently unimplemented, but called in 'update-signature-with-live-data!' below.
+      -> 'update-signature-with-live-data!' is not yet implemented...
+   
+   Process a live sample into signature format"
   [sample]
   (let [sampling-rate (api/get-current-sample-rate)]
     {:timestamp (:timestamp sample)
@@ -1473,7 +1593,9 @@
      :game-validated true}))
 
 (defn update-signature-with-live-data!
-  "Update signature.edn with live high-confidence data"
+  "Currently unimplemented, but called in 'capture-live-signature-sample!' below.
+   
+   Update signature.edn with live high-confidence data"
   [category signature samples]
   (try
     (let [existing-signature (lexi/load-signature-data category signature)
@@ -1483,10 +1605,10 @@
 
           ; Create enhanced signature data
           updated-signature (merge existing-signature
-                                    {:live-updates {:samples processed-samples
-                                                    :last-update (System/currentTimeMillis)
-                                                    :update-count (inc (get-in existing-signature [:live-updates :update-count] 0))}
-                                     :confidence-boost (calculate-confidence-boost samples existing-signature)})]
+                                   {:live-updates {:samples processed-samples
+                                                   :last-update (System/currentTimeMillis)
+                                                   :update-count (inc (get-in existing-signature [:live-updates :update-count] 0))}
+                                    :confidence-boost (calculate-confidence-boost samples existing-signature)})]
       ; Save updated signature
       (with-open [w (io/writer existing-signature)]
         (binding [*print-length* nil *print-level* nil]
@@ -1506,7 +1628,9 @@
       (println "Error updating signature with live data:" (.getMessage e)))))
 
 (defn capture-live-signature-sample!
-  "Capture a high-confidence sample during gameplay - currently unimplemented"
+  "Currently unimplemented...
+   
+   Capture a high-confidence sample during gameplay."
   [profile-name category signature-type confidence-data eeg-sample game-context]
   (let [timestamp (System/currentTimeMillis)
         sample-key (str category "/" signature-type "/" timestamp)
@@ -1534,7 +1658,12 @@
       (when (>= (count samples) 3) ; Minimum samples for update
         (update-signature-with-live-data! profile-name category signature-type samples)))))
 
-(defn start-eeg-streaming-server []
+(defn start-eeg-streaming-server 
+  "Begin streaming life eeg data directly into a specialized category recording.
+   
+   Meant to be called by applications built on brainfloj, and called in the Pong
+      example in the 'AsyncBCIStateManager' in the components.cljc file."
+  []
   (try
     (println "Starting EEG streaming for category:")
 
@@ -1554,7 +1683,12 @@
       (println "Error starting EEG streaming:" (.getMessage e))
       {:success false :error (.getMessage e)})))
 
-(defn stop-eeg-streaming-server []
+(defn stop-eeg-streaming-server
+  "Complete streaming life eeg data directly into a specialized category recording.
+     
+   Meant to be called by applications built on brainfloj, and called in the Pong
+      example in the 'AsyncBCIStateManager' in the components.cljc file."
+  []
   (try
     (println "Stopping EEG streaming")
     (println "***GAME: STOPPED category recording at" (System/currentTimeMillis))
@@ -1566,8 +1700,11 @@
       (println "Error stopping EEG streaming:" (.getMessage e))
       {:success false :error (.getMessage e)})))
 
-(defn calculate-feature-similarity [features1 features2]
-  "Calculate similarity between two feature sets using simple correlation"
+(defn calculate-feature-similarity 
+  "Currently unimplemented...
+   
+   Calculate similarity between two feature sets using simple correlation"
+  [features1 features2]
   (try
     (if (or (nil? features1) (nil? features2))
       0.0
@@ -1593,12 +1730,16 @@
       0.0)))
 
 (defn get-recent-data
-  "Get recent EEG data with improved validation"
+  "Get recent EEG data with improved validation.
+   
+   Called in applications built upon brainflow.
+      Called in the Pong example in 'start-signature-enhancement-background!',
+      'match-brain-activity-server', and 'start-eeg-ingestion!'."
   [seconds]
   (try
     (let [current-time (System/currentTimeMillis)
           eeg-data @state/eeg-data]
-      
+
       ; Early validation
       (when (< (count eeg-data) 8)
         (println "WARNING: Insufficient total data points")
@@ -1625,17 +1766,15 @@
       [])))
 
 (defn get-recent-data-with-even-samples
-  "Get recent EEG data ensuring even number of samples for FFT"
+  "Get recent EEG data ensuring even number of samples for FFT.
+   
+   Called in 'match-brain-activity' below."
   [seconds]
   (let [current-time (System/currentTimeMillis)
         cutoff-time (- current-time (* seconds 1000))
         eeg-data @state/eeg-data
         fresh-cutoff (- current-time (* 1.0 1000))]
-
-    (println "=== GET-RECENT-DATA-EVEN ===")
-    (println "Current time:" current-time)
-    (println "Cutoff time:" cutoff-time)
-
+    
     (when eeg-data
       (let [recent (filterv #(> (:timestamp %) cutoff-time) eeg-data)
             fresh-recent (filterv #(> (:timestamp %) fresh-cutoff) recent)
@@ -1644,10 +1783,6 @@
             even-count (if (even? sample-count) sample-count (dec sample-count))
             even-samples (take even-count fresh-recent)]
 
-        (println "Recent data points found:" (count recent))
-        (println "Fresh recent data points:" sample-count)
-        (println "Even sample count:" even-count)
-
         (if (>= even-count 8) ; Minimum 8 samples for reliable FFT
           (vec even-samples)
           (do
@@ -1655,7 +1790,10 @@
             []))))))
 
 (defn calculate-overall-confidence
-  "Calculate overall confidence score from up/down scores"
+  "Calculate overall confidence score from up/down scores.
+   
+   I don't call this here, but I am calling it in the Pong game in 'match-brain-activity-server'. 
+      I may change that and implement it here in the future."
   [up-score down-score category-intelligence]
   (try
     (let [intelligence-metrics (get-in category-intelligence [:summary :all :intelligence-metrics])
@@ -1697,13 +1835,12 @@
 
 
 (defn get-smoothed-features
+  "Provides more accurate live data by averaging recent data over a sliding window.
+   
+   Called in 'match-brain-activity' below."
   [total-seconds window-count sampling-rate]
   (try
     (let [eeg-data @state/eeg-data]
-
-      (println "=== SMOOTHED FEATURES ===")
-      (println "Total EEG data available:" (count eeg-data))
-      (println "Window count requested:" window-count)
 
       ; Early return if not enough data
       (when (< (count eeg-data) (* window-count 4)) ; Reduced minimum per window
@@ -1720,11 +1857,6 @@
                         window-data))
 
             valid-windows (filter some? windows)]
-
-        (println "Data per window:" data-per-window)
-        (println "Total windows attempted:" window-count)
-        (println "Valid windows found:" (count valid-windows))
-        (println "Window sizes:" (map count valid-windows))
 
         ; Need at least 2 valid windows to proceed
         (when (< (count valid-windows) 2)
@@ -1758,9 +1890,6 @@
                                                              band-power-sets))
                                                     total-weight)])
                                           all-keys))]
-
-            (println "Feature sets extracted:" (count feature-sets))
-            (println "Averaged band powers:" averaged-bands)
             {:band-powers averaged-bands
              :timestamp (System/currentTimeMillis)
              :window-count (count valid-windows)
@@ -1770,7 +1899,9 @@
       nil)))
 
 (defn get-realtime-intelligence-status
-  "Get current intelligence status for UI display - currently unimplemented"
+  "Currently unimplemented...
+   
+   Provides 'metametrics' about the category bci performance over time."
   [category]
   (try
     (let [category-intelligence (lexi/load-category category)]
@@ -1791,7 +1922,9 @@
        :error (.getMessage e)})))
 
 (defn continue-with-matching
-  "Continue matching process with extracted features"
+  "Continue matching process with extracted features.
+   
+   Called in 'match-brain-activity' below."
   [current-features is-smoothed?]
   (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
         up-dir (fio/get-wave-lexicon-dir profile-name "pong/up")
@@ -1802,11 +1935,11 @@
     (if (and (seq up-signatures) (seq down-signatures))
       (let [current-bands (:band-powers current-features)
 
-            up-scores (map #(calculate-band-power-similarity-fixed
+            up-scores (map #(calculate-band-power-similarity
                              current-bands
                              (:band-powers %))
                            up-signatures)
-            down-scores (map #(calculate-band-power-similarity-fixed
+            down-scores (map #(calculate-band-power-similarity
                                current-bands
                                (:band-powers %))
                              down-signatures)
@@ -1826,7 +1959,9 @@
         {:up 0.0 :down 0.0 :error "No trained patterns found"}))))
 
 (defn apply-enhancement
-  "Apply category intelligence enhancements to raw confidence scores"
+  "Apply category intelligence enhancements to raw confidence scores.
+   
+   Called in 'match-brain-activity' below."
   [up-confidence down-confidence category-intelligence]
   (try
     (let [; Get intelligence metrics with safe fallbacks
@@ -1893,7 +2028,7 @@
           eeg-data @state/eeg-data
           data-count (count eeg-data)]
 
-      (println "=== BRAIN ACTIVITY MATCHING ===")
+      ;(println "=== BRAIN ACTIVITY MATCHING ===")
       (cond
         (not recording?)
         {:timestamp current-time

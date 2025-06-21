@@ -6,87 +6,102 @@
             #?(:clj [floj.wave-lexicon :as lexi])
             #?(:clj [brain-pong.signature :as signature])))
 
-(defn calculate-assistance-level
-  "Calculate current assistance level based on user's BCI performance
+#?(:clj
+   (do
+     (defn calculate-assistance-level
+       "Calculate current assistance level based on user's BCI performance
    Returns value between 0.0 (no assistance) and 1.0 (full assistance)"
-  [user-profile category-data game-stats]
-  (let [; Get user's current confidence/accuracy from category data
-        avg-confidence (get-in category-data [:performance :avg-confidence] 0.3)
-        accuracy-rate (get-in category-data [:performance :accuracy-rate] 0.5)
-        session-count (get-in category-data [:performance :session-count] 0)
+       [user-profile category-data game-stats]
+       (let [; Get user's current confidence/accuracy from category data
+             avg-confidence (get-in category-data [:performance :avg-confidence] 0.3)
+             accuracy-rate (get-in category-data [:performance :accuracy-rate] 0.5)
+             session-count (get-in category-data [:performance :session-count] 0)
 
         ; Current game performance
-        recent-success-rate (get-in game-stats [:recent-success-rate] 0.0)
+             recent-success-rate (get-in game-stats [:recent-success-rate] 0.0)
 
         ; Calculate base assistance level (starts high, decreases with improvement)
-        confidence-factor (- 1.0 (min 1.0 avg-confidence))
-        accuracy-factor (- 1.0 (min 1.0 accuracy-rate))
-        experience-factor (/ 1.0 (+ 1.0 (* 0.1 session-count))) ; Decreases with experience
+             confidence-factor (- 1.0 (min 1.0 avg-confidence))
+             accuracy-factor (- 1.0 (min 1.0 accuracy-rate))
+             experience-factor (/ 1.0 (+ 1.0 (* 0.1 session-count))) ; Decreases with experience
 
         ; Weighted combination
-        base-assistance (* 0.4 confidence-factor)
-        accuracy-assistance (* 0.3 accuracy-factor)
-        experience-assistance (* 0.3 experience-factor)
+             base-assistance (* 0.4 confidence-factor)
+             accuracy-assistance (* 0.3 accuracy-factor)
+             experience-assistance (* 0.3 experience-factor)
 
-        total-assistance (+ base-assistance accuracy-assistance experience-assistance)
+             total-assistance (+ base-assistance accuracy-assistance experience-assistance)
 
         ; Apply recent performance modifier
-        performance-modifier (if (> recent-success-rate 0.7) 0.8 1.0)
+             performance-modifier (if (> recent-success-rate 0.7) 0.8 1.0)
 
-        final-assistance (* total-assistance performance-modifier)]
-    (max 0.0 (min 1.0 final-assistance))))
+             final-assistance (* total-assistance performance-modifier)]
+         (max 0.0 (min 1.0 final-assistance))))
 
-(defn should-provide-assistance?
-  "Determine if we should provide assistance based on game state and ball position"
-  [game-state assistance-level]
-  (let [{:keys [ball player-paddle]} (:game game-state)
-        {:keys [x y dy]} ball
-        {:keys [x paddle-x y paddle-y height paddle-height]} player-paddle
+     (defn should-provide-assistance?
+       "Determine if we should provide assistance based on game state and ball position"
+       [game-state assistance-level]
+       (let [{:keys [ball player-paddle]} (:game game-state)
+             {:keys [x y dy]} ball
+             {:keys [x paddle-x y paddle-y height paddle-height]} player-paddle
 
         ; Calculate relative positions
-        ball-paddle-distance (Math/abs (- y (+ paddle-y (/ paddle-height 2))))
-        ball-approaching? (> (:dx ball) 0) ; Ball moving toward player
+             ball-paddle-distance (Math/abs (- y (+ paddle-y (/ paddle-height 2))))
+             ball-approaching? (> (:dx ball) 0) ; Ball moving toward player
 
         ; Determine if player "needs help"
-        ball-above-paddle? (< y paddle-y)
-        ball-below-paddle? (> y (+ paddle-y paddle-height))
-        ball-moving-up? (< dy 0)
-        ball-moving-down? (> dy 0)
+             ball-above-paddle? (< y paddle-y)
+             ball-below-paddle? (> y (+ paddle-y paddle-height))
+             ball-moving-up? (< dy 0)
+             ball-moving-down? (> dy 0)
 
         ; Assistance scenarios
-        need-down-help? (and ball-above-paddle? ball-moving-up? ball-approaching?)
-        need-up-help? (and ball-below-paddle? ball-moving-down? ball-approaching?)
+             need-down-help? (and ball-above-paddle? ball-moving-up? ball-approaching?)
+             need-up-help? (and ball-below-paddle? ball-moving-down? ball-approaching?)
 
         ; Apply assistance probability
-        assistance-chance (rand)
-        should-assist? (< assistance-chance assistance-level)]
+             assistance-chance (rand)
+             should-assist? (< assistance-chance assistance-level)]
 
-    (when should-assist?
-      (cond
-        need-down-help? :down
-        need-up-help? :up
-        :else nil))))
+         (when should-assist?
+           (cond
+             need-down-help? :down
+             need-up-help? :up
+             :else nil))))
 
-(defn apply-progressive-boost
-  "Apply a movement boost based on assistance level"
-  [direction assistance-level base-speed]
-  (let [boost-multiplier (+ 1.0 (* 2.0 assistance-level))
-        boosted-speed (* base-speed boost-multiplier)]
-    (dotimes [_ (Math/ceil boost-multiplier)]
-      (pong-state/move-paddle! direction))
+     (defn update-game-stats!
+       "Update game statistics for assistance calculation"
+       [result]
+       (swap! pong-state/state update-in [:game :stats]
+              (fn [stats]
+                (let [updated-stats (-> stats
+                                        (update :total-attempts inc)
+                                        (update (if (= result :success) :successes :failures) inc))
+                      success-rate (/ (:successes updated-stats) (:total-attempts updated-stats))]
+                  (assoc updated-stats :recent-success-rate success-rate)))))
 
-    boosted-speed))
+     (defn get-assistance-data-server
+       "Server function to get category data for assistance calculation"
+       []
+       (try
+         (let [user-profile ((:get-active-profile @state/state))
+               category-data (lexi/load-category-summary "pong")]
+           {:category-data category-data
+            :timestamp (System/currentTimeMillis)})
+         (catch Exception e
+           (println "Error getting assistance data:" (.getMessage e))
+           {:error (.getMessage e)})))))
 
-(defn update-game-stats!
-  "Update game statistics for assistance calculation"
-  [result]
-  (swap! pong-state/state update-in [:game :stats]
-         (fn [stats]
-           (let [updated-stats (-> stats
-                                   (update :total-attempts inc)
-                                   (update (if (= result :success) :successes :failures) inc))
-                 success-rate (/ (:successes updated-stats) (:total-attempts updated-stats))]
-             (assoc updated-stats :recent-success-rate success-rate)))))
+
+#?(:cljs (defn apply-progressive-boost
+           "Apply a movement boost based on assistance level"
+           [direction assistance-level base-speed]
+           (let [boost-multiplier (+ 1.0 (* 2.0 assistance-level))
+                 boosted-speed (* base-speed boost-multiplier)]
+             (dotimes [_ (Math/ceil boost-multiplier)]
+               (pong-state/move-paddle! direction))
+
+             boosted-speed)))
 
 (e/defn Get-adaptive-threshold
   "Get adaptive threshold based on current category intelligence"
@@ -98,12 +113,12 @@
              separation-score (or (:separation-score intelligence-metrics) 0.5)
              triangulation-quality (or (:triangulation-quality intelligence-metrics) 1.0)
              stability-score (or (:stability-score intelligence-metrics) 0.0)
-             
+
              base-threshold (if (> separation-score 0.6) 0.02 0.05)
              quality-adjustment (* (- 1.0 separation-score) 0.03)
              stability-adjustment (* (max 0.0 (- 1.0 stability-score)) 0.02)
              dynamic-threshold (max 0.005 (+ base-threshold quality-adjustment stability-adjustment))]
-         
+
          (js/console.log "Adaptive threshold calculation:")
          (js/console.log "  Separation score:" separation-score)
          (js/console.log "  Triangulation quality:" triangulation-quality)
@@ -112,24 +127,11 @@
          (js/console.log "  Quality adjustment:" quality-adjustment)
          (js/console.log "  Stability adjustment:" stability-adjustment)
          (js/console.log "  Final dynamic threshold:" dynamic-threshold)
-         
+
          dynamic-threshold)
        (do
          (js/console.log "No category intelligence found, using fallback threshold")
          0.05)))))
-
-#?(:clj
-   (defn get-assistance-data-server
-     "Server function to get category data for assistance calculation"
-     []
-     (try
-       (let [user-profile ((:get-active-profile @state/state))
-             category-data (lexi/load-category-summary "pong")]
-         {:category-data category-data
-          :timestamp (System/currentTimeMillis)})
-       (catch Exception e
-         (println "Error getting assistance data:" (.getMessage e))
-         {:error (.getMessage e)}))))
 
 (e/defn AssistanceManager []
   (e/client

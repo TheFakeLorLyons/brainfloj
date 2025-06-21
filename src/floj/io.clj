@@ -1,4 +1,5 @@
 (ns floj.io
+  "Responsible for handling general file io used by the rest of BrainFloj."
   (:require [floj.state :as state]
             [clojure.java.io :as io]
             [clojure.edn :as edn]))

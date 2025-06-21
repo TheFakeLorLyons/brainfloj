@@ -1,4 +1,7 @@
 (ns floj.profiles
+  "Profile management and connection to default devices. Profiles are a foundational part
+   of building applications on top of BrainFloj, and each profile contains its own set
+   of recordings and categories. Each profile contains a 'pong' category by default."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]

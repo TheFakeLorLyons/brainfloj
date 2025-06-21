@@ -1,4 +1,7 @@
 (ns floj.frequency-analysis
+  "Mostly used in the eeg visualizer, and somewhat deprecated in favor of using the included
+   BrainFlow data-filter class. I recommend sticking with that namespace if you are going to use
+   the math functions."
   (:require [clojure.string :as str])
   (:import [org.apache.commons.math3.transform DftNormalization FastFourierTransformer TransformType]
            [org.apache.commons.math3.complex Complex])

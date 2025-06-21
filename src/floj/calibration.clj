@@ -1,4 +1,6 @@
 (ns floj.calibration
+  "This namespace handles on the fly calibration for recordings, and routinely updates the
+   golden-tensor as users record more things."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [floj.io :as fio]

@@ -1,4 +1,6 @@
 (ns floj.api
+  "This namespace is the primary namespace linking Clojure to BrainFlow. It handles connecting
+   to the OpenBCI boards, and the connection between profiles and their associated boards."
   (:require [floj.brainflow.board-shim :as brainflow]
             [floj.brainflow.board-ids :as id]
             [floj.brainflow.brainflow-input-params :as params]
