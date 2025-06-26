@@ -46,7 +46,7 @@ The codebase is modular and structured for clarity and extensibility:
       - Record waveforms and create individualized 'categories' of 'wave-signatures' for the creation of various BCI applications.
       - (Soon) Tag files with important moments to enhance calibration and demarcate important moments.
       - (Soon) Custom keystokes to enable general purpose brain computing input at the command line.
-   - Run the CLI in the root directory with the command `clojure -M:flow -m floj.cli`
+   - Run the CLI in the root directory with the command `clj -M:flow -m floj.cli`
       - It will prompt you to connect a device. If you do not connect a device, it will begin with a default 'SYNTHETIC_BOARD'
          - It is possible to take recordings with the synthetic board and read them with the build in file reader in the CLI, but the numbers aren't usable for anything meaningful at this time (except maybe some random number generation).
 

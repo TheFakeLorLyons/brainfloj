@@ -245,11 +245,6 @@
   [board-id]
   (vec (BoardShim/get_gyro_channels board-id)))
 
-(defn get-ecg-channels
-  "Get ECG channels for the specified board"
-  [board-id
-   (vec (BoardShim/get_ecg_channels board-id))])
-
 
 
 
