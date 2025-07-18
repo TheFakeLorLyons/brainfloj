@@ -1135,13 +1135,13 @@
             (with-open [w (io/writer (str recording-dir "/recording_metadata.edn"))]
               (binding [*print-length* nil
                         *print-level* nil]
-                (pprint signature-metadata w)))
+                (clojure.pprint/pprint signature-metadata w)))
 
             ; Write tags.edn
             (with-open [w (io/writer (str recording-dir "/tags.edn"))]
               (binding [*print-length* nil
                         *print-level* nil]
-                (pprint relevant-tags w)))
+                (clojure.pprint/pprint relevant-tags w)))
 
             ; Write the extracted wave signature data using write-lor!
             ; Temporarily set the recording context to point to our wave signature directory
