@@ -1104,8 +1104,9 @@
               current-data-length (count @state/eeg-data)
 
               ; Extract the wave signature data segment
-              wave-signature-data (subvec @state/eeg-data start-index current-data-length)
-
+              raw-data-segment (subvec @state/eeg-data start-index current-data-length)
+              wave-signature-data (mapcat :eeg raw-data-segment)
+              
               recording-dir (:recording-dir wave-sig-context)
               board-id (:board-id wave-sig-context)
 
