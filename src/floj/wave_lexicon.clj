@@ -5,15 +5,16 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [floj.brainflow.board-shim :as brainflow]
             [floj.calibration :as calibrate]
+            [floj.api :as api]
+            [floj.categorization :as category]
             [floj.io :as fio]
+            [floj.lor :as lor]
+            [floj.profiles :as profiles]
             [floj.record :as record]
             [floj.state :as state]
             [floj.stream-manager :as stream]
-            [floj.brainflow.board-shim :as brainflow]
-            [floj.categorization :as category]
-            [floj.profiles :as profiles]
-            [floj.api :as api]
             [zprint.core :as zp]))
 
 (def ^:private MIN_SAMPLES_FOR_SIGNATURE 20)
@@ -1153,7 +1154,7 @@
 
               (try
                 ; Use the existing write-lor! function to write the extracted segment
-                (let [lor-result (write-lor! wave-signature-data relevant-tags board-id)]
+                (let [lor-result (lor/write-lor! wave-signature-data relevant-tags board-id)]
                   (if lor-result
                     (println "✅ Wave signature .lor files written successfully")
                     (println "❌ Error writing wave signature .lor files")))
