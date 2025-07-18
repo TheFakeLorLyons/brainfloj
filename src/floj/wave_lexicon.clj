@@ -1191,7 +1191,7 @@
             (println "📁 Files created:")
             (println "  - recording_metadata.edn")
             (println "  - tags.edn")
-            (println "  - [1-" (count (api/get-current-channels) "].lor files (" (count wave-signature-data) "samples each)")
+            (println "  - [1-" (count (api/get-current-channels)) "].lor files (" (count wave-signature-data) "samples each)")
             (println "  - signature_features.edn (if processed)")
 
             {:success true
