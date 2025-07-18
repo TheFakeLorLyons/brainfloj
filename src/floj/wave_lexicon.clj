@@ -1040,6 +1040,173 @@
         (println "Error in add-wave-signature:" (.getMessage e))
         (.printStackTrace e)))))
 
+(defn capture-wave-signature!
+  "Start capturing a wave signature from ongoing category recording"
+  [category-name signature-name & {:keys [include-in-aggregation] :or {include-in-aggregation true}}]
+  (try
+    (when (str/blank? signature-name)
+      (throw (Exception. "Signature name must be provided")))
+
+    (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
+          timestamp (System/currentTimeMillis)
+
+          signature-base-dir (str (fio/get-wave-lexicon-dir profile-name) "/" category-name "/" (str/lower-case signature-name))
+          recording-dir (str signature-base-dir "/" (str/lower-case signature-name) "_" timestamp)
+
+          ; Get the current recording context (from the ongoing "pong" recording)
+          current-recording-context @state/recording-context
+
+          ; Create wave signature context that inherits from current recording
+          wave-signature-context {:signature-name (name signature-name)
+                                  :category category-name
+                                  :is-wave-signature true
+                                  :include-in-aggregation include-in-aggregation
+                                  :wave-signature-timestamp timestamp
+                                  :recording-dir recording-dir
+                                  :signature-base-dir signature-base-dir
+                                  :capture-start-time timestamp
+                                  :start-data-index (count @state/eeg-data)
+                                  :board-id (:board-id current-recording-context)
+                                  :parent-recording-context current-recording-context}]
+
+      (.mkdirs (java.io.File. recording-dir))
+
+      ; Store in a separate wave signature state
+      (swap! state/state assoc :active-wave-signature wave-signature-context)
+
+      ; Mark the start point in the continuous data stream
+      (let [current-data-length (count @state/eeg-data)]
+        (swap! state/state assoc-in [:active-wave-signature :start-data-index] current-data-length))
+
+      ; Add start tag to existing recording
+      (swap! state/tags conj {:timestamp timestamp
+                              :label (str "WAVE_SIGNATURE_START:" (name signature-name))})
+
+      (println "🎯 Started wave signature capture for" signature-name
+               "(capturing from ongoing category recording)")
+
+      wave-signature-context)
+
+    (catch Exception e
+      (println "Error starting wave signature capture:" (.getMessage e))
+      (.printStackTrace e)
+      nil)))
+
+(defn stop-wave-signature-capture!
+  "Stop capturing wave signature and create standalone recording files"
+  [signature-name]
+  (try
+    (let [wave-sig-context (get @state/state :active-wave-signature)]
+      (if wave-sig-context
+        (let [timestamp (System/currentTimeMillis)
+              start-index (:start-data-index wave-sig-context)
+              current-data-length (count @state/eeg-data)
+
+              ; Extract the wave signature data segment
+              wave-signature-data (subvec @state/eeg-data start-index current-data-length)
+
+              recording-dir (:recording-dir wave-sig-context)
+              board-id (:board-id wave-sig-context)
+
+              ; Get relevant tags for this signature
+              start-time (:capture-start-time wave-sig-context)
+              relevant-tags (filter #(>= (:timestamp %) start-time) @state/tags)]
+
+          ; Add end tag
+          (swap! state/tags conj {:timestamp timestamp
+                                  :label (str "WAVE_SIGNATURE_END:" (name signature-name))})
+
+          ; Create complete metadata for this wave signature
+          (let [signature-metadata {:signature-name (name signature-name)
+                                    :category (:category wave-sig-context)
+                                    :is-wave-signature true
+                                    :capture-start-time start-time
+                                    :capture-end-time timestamp
+                                    :sample-count (count wave-signature-data)
+                                    :data-start-index start-index
+                                    :data-end-index current-data-length
+                                    :recording-id (str signature-name "_" timestamp)
+                                    :board-id board-id
+                                    :recorded-at (java.util.Date.)
+                                    :version "1.0"
+                                    :tags relevant-tags}]
+
+            ; Write recording_metadata.edn
+            (with-open [w (io/writer (str recording-dir "/recording_metadata.edn"))]
+              (binding [*print-length* nil
+                        *print-level* nil]
+                (pprint signature-metadata w)))
+
+            ; Write tags.edn
+            (with-open [w (io/writer (str recording-dir "/tags.edn"))]
+              (binding [*print-length* nil
+                        *print-level* nil]
+                (pprint relevant-tags w)))
+
+            ; Write the extracted wave signature data using write-lor!
+            ; Temporarily set the recording context to point to our wave signature directory
+            (let [original-recording-context @state/recording-context
+                  temp-recording-context (assoc original-recording-context :lorfile-dir recording-dir)]
+
+              ; Temporarily update the recording context
+              (reset! state/recording-context temp-recording-context)
+
+              (try
+                ; Use the existing write-lor! function to write the extracted segment
+                (let [lor-result (write-lor! wave-signature-data relevant-tags board-id)]
+                  (if lor-result
+                    (println "✅ Wave signature .lor files written successfully")
+                    (println "❌ Error writing wave signature .lor files")))
+
+                (finally
+                  ; Restore the original recording context
+                  (reset! state/recording-context original-recording-context))))
+
+            ; Process signature features if we have enough data
+            (when (>= (count wave-signature-data) 10) ; MIN_SAMPLES_FOR_SIGNATURE
+              (try
+                ; Generate signature_features.edn using existing processing
+                (process-wave-signature! recording-dir signature-metadata)
+                (println "✅ Wave signature features processed")
+
+                ; Auto-aggregate if enabled - this updates the signature.edn file
+                (when (:include-in-aggregation wave-sig-context)
+                  (try
+                    (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
+                          category (:category wave-sig-context)]
+
+                      (category/aggregate-after-recording! profile-name category signature-name)
+                      (println "✅ Signature aggregation completed successfully"))
+                    (catch Exception agg-e
+                      (println "❌ Error during signature aggregation:" (.getMessage agg-e)))))
+
+                (catch Exception proc-e
+                  (println "❌ Error processing wave signature:" (.getMessage proc-e)))))
+
+            ; Clear the wave signature context
+            (swap! state/state dissoc :active-wave-signature)
+
+            (println "✅ Wave signature capture completed:" recording-dir)
+            (println "📁 Files created:")
+            (println "  - recording_metadata.edn")
+            (println "  - tags.edn")
+            (println "  - [1-" channel-count "].lor files (" (count wave-signature-data) "samples each)")
+            (println "  - signature_features.edn (if processed)")
+
+            {:success true
+             :recording-dir recording-dir
+             :sample-count (count wave-signature-data)
+             :files-created ["recording_metadata.edn" "tags.edn" "signature_features.edn"]}))
+
+        (do
+          (println "❌ No active wave signature capture to stop")
+          {:success false :error "No active wave signature capture"})))
+
+    (catch Exception e
+      (println "Error stopping wave signature capture:" (.getMessage e))
+      (.printStackTrace e)
+      {:success false :error (.getMessage e)})))
+
 (defn load-category-template
   "Load a category template for matching"
   [profile-name category]
