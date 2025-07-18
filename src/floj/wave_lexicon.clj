@@ -1051,7 +1051,7 @@
     (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
           timestamp (System/currentTimeMillis)
 
-          signature-base-dir (str (fio/get-wave-lexicon-dir profile-name) "/" category-name "/" (str/lower-case signature-name))
+          signature-base-dir (str (fio/get-wave-lexicon-dir profile-name category-name) "/" (str/lower-case signature-name))
           recording-dir (str signature-base-dir "/" (str/lower-case signature-name) "_" timestamp)
 
           ; Get the current recording context (from the ongoing "pong" recording)
