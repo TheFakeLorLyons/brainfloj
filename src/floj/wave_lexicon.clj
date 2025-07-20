@@ -578,8 +578,14 @@
       (when-not context
         (throw (Exception. "Failed to create recording context")))
 
+      ; Start the actual recording
+      (record/start-recording! category-recording-info)
+
       ; Store context for recording
-      (reset! state/recording-context context)
+      (swap! state/recording-context update-in [:metadata] merge
+        { :signature-name (name category)
+         :category (name category)
+         :is-category true})
 
       ; Add tag for wave signature start
       (swap! state/tags conj {:timestamp (:start-time (:metadata context))
@@ -588,9 +594,6 @@
 
       ; Reset EEG data collection
       (reset! state/eeg-data [])
-
-      ; Start the actual recording
-      (record/start-recording! category-recording-info)
 
       ; Log success
       (println "Started recording wave signature for" category)
@@ -827,19 +830,18 @@
     (let [context @state/recording-context]
 
       ; Add end tag
-      (let [timestamp (System/currentTimeMillis)
-            _ (println "Category " category)]
+      (let [timestamp (System/currentTimeMillis)]
         (swap! state/tags conj {:timestamp timestamp
                                 :label (str "WAVE_SIGNATURE_END:"
                                             category)}))
-
-      (println "before context ends " context)
-          ; Stop recording
+      ; Stop recording
       (record/stop-recording!)
 
           ; Process the recording into a wave signature
       (let [category-recording-dir (:lorfile-dir context)
-            metadata (get-in context [:metadata])
+            metadata-file (str category-recording-dir "/recording_metadata.edn")
+            existing-metadata (when (.exists (io/file metadata-file))
+                                (edn/read-string (slurp metadata-file)))
             eeg-data @state/eeg-data
             profile-name (:name ((:get-active-profile @state/state)))
 
@@ -847,30 +849,25 @@
             signature-metadata (merge metadata
                                       {:sample-count (count eeg-data)
                                        :tags @state/tags
-                                       :processed-at (java.util.Date.)})]
+                                       :processed-at (java.util.Date.)})
+            include-in-aggregation false]
 
-        (spit (str category-recording-dir "/recording_metadata.edn")
-              (pr-str signature-metadata))
+        (when existing-metadata
+          (let [enhanced-metadata (merge existing-metadata
+                                         {:sample-count (count eeg-data)
+                                          :tags @state/tags
+                                          :category (name category)
+                                          :signature-name (name category)
+                                          :is-wave-signature false
+                                          :include-in-aggregation include-in-aggregation})]
 
-        ; Save tags separately for easy access
-        (spit (str category-recording-dir "/tags.edn")
-              (pr-str @state/tags))
+            ; Write enhanced metadata
+            (with-open [w (io/writer metadata-file)]
+              (binding [*print-length* nil
+                        *print-level* nil]
+                (clojure.pprint/pprint enhanced-metadata w)))
 
-        ; Process the signature features if we have enough data
-        (if (>= (count eeg-data) MIN_SAMPLES_FOR_SIGNATURE)
-          (do
-            (process-wave-signature! category-recording-dir signature-metadata)
-            (println "Successfully processed category recording for category: " category)
-
-            category-recording-dir)
-          (do
-            (println "Not enough data to process category recording. Minimum required:"
-                     MIN_SAMPLES_FOR_SIGNATURE)
-            nil))))
-
-    ; Ensure recording is stopped in all cases
-    (when @state/recording?
-      (record/stop-recording!))
+            recording-dir))))
     (catch Exception e
       (println "Error stopping category recording:" (.getMessage e))
       (.printStackTrace e)
@@ -1062,12 +1059,10 @@
                                   :category category-name
                                   :is-wave-signature true
                                   :include-in-aggregation include-in-aggregation
-                                  :wave-signature-timestamp timestamp
+                                  :capture-start-time timestamp
                                   :recording-dir recording-dir
                                   :signature-base-dir signature-base-dir
-                                  :capture-start-time timestamp
                                   :start-data-index (count @state/eeg-data)
-                                  :board-id (:board-id current-recording-context)
                                   :parent-recording-context current-recording-context}]
 
       (.mkdirs (java.io.File. recording-dir))
@@ -1128,8 +1123,6 @@
                                     :data-start-index start-index
                                     :data-end-index current-data-length
                                     :recording-id (str signature-name "_" timestamp)
-                                    :board-id board-id
-                                    :recorded-at (java.util.Date.)
                                     :version "1.0"
                                     :tags relevant-tags}]
 
