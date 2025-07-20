@@ -846,7 +846,7 @@
             profile-name (:name ((:get-active-profile @state/state)))
 
                 ; Additional signature-specific metadata
-            signature-metadata (merge metadata
+            signature-metadata (merge existing-metadata
                                       {:sample-count (count eeg-data)
                                        :tags @state/tags
                                        :processed-at (java.util.Date.)})
