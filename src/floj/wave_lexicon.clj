@@ -867,7 +867,7 @@
                         *print-level* nil]
                 (clojure.pprint/pprint enhanced-metadata w)))
 
-            recording-dir))))
+            category-recording-dir))))
     (catch Exception e
       (println "Error stopping category recording:" (.getMessage e))
       (.printStackTrace e)
