@@ -829,7 +829,7 @@
 
       ; Add end tag
       (let [timestamp (System/currentTimeMillis)]
-        (swap! state/tags conj {:label (str category "_END:")
+        (swap! state/tags conj {:label (str (str/upper-case category) "_END:")
                                 :timestamp timestamp}))
       ; Stop recording
       (record/stop-recording!)
