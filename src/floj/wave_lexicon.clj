@@ -517,9 +517,9 @@
 
       ; Add start tag
       (let [start-time (System/currentTimeMillis)]
-        (swap! state/tags conj {:timestamp start-time
-                                :label (str "WAVE_SIGNATURE_START:"
-                                            (name category) "/" (name signature-name))}))
+        (swap! state/tags conj {:label (str "WAVE_SIGNATURE_START:"
+                                            (name category) "/" (name signature-name))
+                                :timestamp start-time}))
 
       (println "Started wave signature recording for" category "/" signature-name
                (if include-in-aggregation "" "(practice mode - will not be aggregated)"))
@@ -587,8 +587,8 @@
               :is-category true})
 
       ; Add tag for wave signature start
-      (swap! state/tags conj {:timestamp (:start-time (:metadata context))
-                              :label (str (str/upper-case category) "_START:")})
+      (swap! state/tags conj {:label (str (str/upper-case category) "_START:")
+                              :timestamp (:start-time (:metadata context))})
 
       ; Reset EEG data collection
       (reset! state/eeg-data [])
@@ -769,9 +769,9 @@
     (let [context @state/recording-context]
       ; Add end tag
       (let [timestamp (System/currentTimeMillis)]
-        (swap! state/tags conj {:timestamp timestamp
-                                :label (str "WAVE_SIGNATURE_END:"
-                                            category "/" signature)}))
+        (swap! state/tags conj {:label (str "WAVE_SIGNATURE_END:"
+                                            category "/" signature)
+                                :timestamp timestamp}))
 
       ; Stop recording (this handles the metadata)
       (record/stop-recording!)
@@ -829,8 +829,8 @@
 
       ; Add end tag
       (let [timestamp (System/currentTimeMillis)]
-        (swap! state/tags conj {:timestamp timestamp
-                                :label (str "_END:")}))
+        (swap! state/tags conj {:label (str category "_END:")
+                                :timestamp timestamp}))
       ; Stop recording
       (record/stop-recording!)
 
@@ -1073,9 +1073,9 @@
         (swap! state/state assoc-in [:active-wave-signature :start-data-index] current-data-length))
 
       ; Add start tag to existing recording
-      (swap! state/tags conj {:timestamp timestamp
-                              :label (str "WAVE_SIGNATURE_START:"
-                                          category "/" signature)})
+      (swap! state/tags conj {:label (str "WAVE_SIGNATURE_START:"
+                                          category "/" signature)
+                              :timestamp timestamp})
 
       (println "🎯 Started wave signature capture for" signature
                "(capturing from ongoing category recording)")
@@ -1109,9 +1109,9 @@
               relevant-tags (filter #(>= (:timestamp %) start-time) @state/tags)]
 
           ; Add end tag
-          (swap! state/tags conj {:timestamp timestamp
-                                  :label (str "WAVE_SIGNATURE_END:"
-                                              category "/" signature)})
+          (swap! state/tags conj {:label (str "WAVE_SIGNATURE_END:"
+                                              category "/" signature)
+                                  :timestamp timestamp})
 
           ; Create complete metadata for this wave signature
           (let [signature-metadata {:signature signature
