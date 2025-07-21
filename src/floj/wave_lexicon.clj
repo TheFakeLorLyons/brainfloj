@@ -481,7 +481,7 @@
       nil)))
 
 (defn start-wave-signature-recording!
-  "Start recording a wave signature with proper calibration - FIXED VERSION"
+  "Start recording a wave signature with calibration"
   [category signature-name & {:keys [include-in-aggregation] :or {include-in-aggregation true}}]
   (try
     (when (or (str/blank? category) (str/blank? signature-name))
@@ -588,8 +588,7 @@
 
       ; Add tag for wave signature start
       (swap! state/tags conj {:timestamp (:start-time (:metadata context))
-                              :label (str (str/upper-case category) "_START:"
-                                          (name category))})
+                              :label (str (str/upper-case category) "_START:")})
 
       ; Reset EEG data collection
       (reset! state/eeg-data [])
@@ -831,8 +830,7 @@
       ; Add end tag
       (let [timestamp (System/currentTimeMillis)]
         (swap! state/tags conj {:timestamp timestamp
-                                :label (str "WAVE_SIGNATURE_END:"
-                                            category)}))
+                                :label (str "_END:")}))
       ; Stop recording
       (record/stop-recording!)
 
@@ -1110,7 +1108,7 @@
 
           ; Add end tag
           (swap! state/tags conj {:timestamp timestamp
-                                  :label (str "WAVE_SIGNATURE_END:" (name signature-name))})
+                                  :label (str (str/upper-case category) "_END:")})
 
           ; Create complete metadata for this wave signature
           (let [signature-metadata {:signature-name (name signature-name)
