@@ -582,9 +582,9 @@
 
       ; Store context for recording
       (swap! state/recording-context update-in [:metadata] merge
-        { :signature-name (name category)
-         :category (name category)
-         :is-category true})
+             {:signature-name (name category)
+              :category (name category)
+              :is-category true})
 
       ; Add tag for wave signature start
       (swap! state/tags conj {:timestamp (:start-time (:metadata context))
@@ -1043,10 +1043,10 @@
 
     (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
           timestamp (System/currentTimeMillis)
-          board-id (brainflow/get-board-id @state/shim) 
+          board-id (brainflow/get-board-id @state/shim)
 
           signature-base-dir (str (fio/get-wave-lexicon-dir profile-name category) "/" (str/lower-case signature))
-          recording-dir (str signature-base-dir "/" (str/lower-case signature-name) "_" timestamp)
+          recording-dir (str signature-base-dir "/" (str/lower-case signature) "_" timestamp)
 
           ; Get the current recording context (from the ongoing "pong" recording)
           current-recording-context @state/recording-context
@@ -1089,7 +1089,7 @@
 
 (defn stop-wave-signature-capture!
   "Stop capturing wave signature and create standalone recording files"
-  [signature-name]
+  [signature]
   (try
     (let [wave-sig-context (get @state/state :active-wave-signature)]
       (if wave-sig-context
@@ -1101,7 +1101,7 @@
 
               ; Extract the wave signature data segment
               raw-data-segment (subvec @state/eeg-data start-index current-data-length)
-              
+
               recording-dir (:recording-dir wave-sig-context)
 
               ; Get relevant tags for this signature
@@ -1114,7 +1114,7 @@
                                               category "/" signature)})
 
           ; Create complete metadata for this wave signature
-          (let [signature-metadata {:signature signature-name
+          (let [signature-metadata {:signature signature
                                     :category category
                                     :is-wave-signature true
                                     :capture-start-time start-time
@@ -1122,7 +1122,7 @@
                                     :sample-count (count raw-data-segment)
                                     :data-start-index start-index
                                     :data-end-index current-data-length
-                                    :recording-id (str signature-name "_" timestamp)
+                                    :recording-id (str signature "_" timestamp)
                                     :version "1.0"
                                     :board-id board-id
                                     :tags relevant-tags}]
@@ -1171,7 +1171,7 @@
                     (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
                           category (:category wave-sig-context)]
 
-                      (category/aggregate-after-recording! profile-name category signature-name)
+                      (category/aggregate-after-recording! profile-name category signature)
                       (println "✅ Signature aggregation completed successfully"))
                     (catch Exception agg-e
                       (println "❌ Error during signature aggregation:" (.getMessage agg-e)))))
