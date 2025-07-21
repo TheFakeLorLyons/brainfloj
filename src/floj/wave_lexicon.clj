@@ -1045,6 +1045,7 @@
 
     (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
           timestamp (System/currentTimeMillis)
+          board-id (brainflow/get-board-id @state/shim) 
 
           signature-base-dir (str (fio/get-wave-lexicon-dir profile-name category-name) "/" (str/lower-case signature-name))
           recording-dir (str signature-base-dir "/" (str/lower-case signature-name) "_" timestamp)
@@ -1059,6 +1060,7 @@
                                   :include-in-aggregation include-in-aggregation
                                   :capture-start-time timestamp
                                   :recording-dir recording-dir
+                                  :board-id board-id
                                   :signature-base-dir signature-base-dir
                                   :start-data-index (count @state/eeg-data)
                                   :parent-recording-context current-recording-context}]
@@ -1093,6 +1095,7 @@
     (let [wave-sig-context (get @state/state :active-wave-signature)]
       (if wave-sig-context
         (let [timestamp (System/currentTimeMillis)
+              board-id (:board-id wave-sig-context)
               start-index (:start-data-index wave-sig-context)
               current-data-length (count @state/eeg-data)
 
@@ -1120,6 +1123,7 @@
                                     :data-end-index current-data-length
                                     :recording-id (str signature-name "_" timestamp)
                                     :version "1.0"
+                                    :board-id board-id
                                     :tags relevant-tags}]
 
             ; Write recording_metadata.edn
