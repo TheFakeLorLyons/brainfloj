@@ -545,14 +545,13 @@
           device-name (brainflow/get-device-name board-id)
           metadata {:recording-id (str category "_" timestamp)
                     :start-time timestamp
-                    :recorded-at (java.util.Date.)
                     :device-type device-name
-                    :board-id board-id
+                    ;:board-id board-id
                     :sampling-rate (api/get-current-sample-rate)
                     :category-name (name category)
                     :is-category true
                     :version "1.0"
-                    :signatures-count (brainflow/get-eeg-channels board-id)}
+                    #_#_:signatures-count "Maybe this will be included later"}
 
           context {:lorfile-dir category-dir
                    :metadata metadata}]
@@ -848,8 +847,7 @@
                 ; Additional signature-specific metadata
             signature-metadata (merge existing-metadata
                                       {:sample-count (count eeg-data)
-                                       :tags @state/tags
-                                       :processed-at (java.util.Date.)})
+                                       :tags @state/tags})
             include-in-aggregation false]
 
         (when existing-metadata
@@ -1100,10 +1098,8 @@
 
               ; Extract the wave signature data segment
               raw-data-segment (subvec @state/eeg-data start-index current-data-length)
-              wave-signature-data (mapcat :eeg raw-data-segment)
               
               recording-dir (:recording-dir wave-sig-context)
-              board-id (:board-id wave-sig-context)
 
               ; Get relevant tags for this signature
               start-time (:capture-start-time wave-sig-context)
@@ -1119,7 +1115,7 @@
                                     :is-wave-signature true
                                     :capture-start-time start-time
                                     :capture-end-time timestamp
-                                    :sample-count (count wave-signature-data)
+                                    :sample-count (count raw-data-segment)
                                     :data-start-index start-index
                                     :data-end-index current-data-length
                                     :recording-id (str signature-name "_" timestamp)
@@ -1148,7 +1144,7 @@
 
               (try
                 ; Use the existing write-lor! function to write the extracted segment
-                (let [lor-result (lor/write-lor! wave-signature-data relevant-tags board-id)]
+                (let [lor-result (lor/write-lor! raw-data-segment relevant-tags board-id)]
                   (if lor-result
                     (println "✅ Wave signature .lor files written successfully")
                     (println "❌ Error writing wave signature .lor files")))
@@ -1158,7 +1154,7 @@
                   (reset! state/recording-context original-recording-context))))
 
             ; Process signature features if we have enough data
-            (when (>= (count wave-signature-data) 10) ; MIN_SAMPLES_FOR_SIGNATURE
+            (when (>= (count raw-data-segment) 10) ; MIN_SAMPLES_FOR_SIGNATURE
               (try
                 ; Generate signature_features.edn using existing processing
                 (process-wave-signature! recording-dir signature-metadata)
@@ -1185,13 +1181,12 @@
             (println "📁 Files created:")
             (println "  - recording_metadata.edn")
             (println "  - tags.edn")
-            (println "  - [1-" (count (api/get-current-channels)) "].lor files (" (count wave-signature-data) "samples each)")
+            (println "  - [1-" (count (api/get-current-channels)) "].lor files (" (count raw-data-segment) "samples each)")
             (println "  - signature_features.edn (if processed)")
 
             {:success true
              :recording-dir recording-dir
-             :sample-count (count wave-signature-data)
-             :files-created ["recording_metadata.edn" "tags.edn" "signature_features.edn"]}))
+             :sample-count (count raw-data-segment)}))
 
         (do
           (println "❌ No active wave signature capture to stop")
