@@ -1036,24 +1036,24 @@
 
 (defn capture-wave-signature!
   "Start capturing a wave signature from ongoing category recording"
-  [category-name signature-name & {:keys [include-in-aggregation] :or {include-in-aggregation true}}]
+  [category signature & {:keys [include-in-aggregation] :or {include-in-aggregation true}}]
   (try
-    (when (str/blank? signature-name)
+    (when (str/blank? signature)
       (throw (Exception. "Signature name must be provided")))
 
     (let [profile-name (or (:name ((:get-active-profile @state/state))) "default")
           timestamp (System/currentTimeMillis)
           board-id (brainflow/get-board-id @state/shim) 
 
-          signature-base-dir (str (fio/get-wave-lexicon-dir profile-name category-name) "/" (str/lower-case signature-name))
+          signature-base-dir (str (fio/get-wave-lexicon-dir profile-name category) "/" (str/lower-case signature))
           recording-dir (str signature-base-dir "/" (str/lower-case signature-name) "_" timestamp)
 
           ; Get the current recording context (from the ongoing "pong" recording)
           current-recording-context @state/recording-context
 
           ; Create wave signature context that inherits from current recording
-          wave-signature-context {:signature-name (name signature-name)
-                                  :category category-name
+          wave-signature-context {:signature signature
+                                  :category category
                                   :is-wave-signature true
                                   :include-in-aggregation include-in-aggregation
                                   :capture-start-time timestamp
@@ -1077,7 +1077,7 @@
                               :label (str "WAVE_SIGNATURE_START:"
                                           category "/" signature)})
 
-      (println "🎯 Started wave signature capture for" signature-name
+      (println "🎯 Started wave signature capture for" signature
                "(capturing from ongoing category recording)")
 
       wave-signature-context)
@@ -1114,7 +1114,7 @@
                                               category "/" signature)})
 
           ; Create complete metadata for this wave signature
-          (let [signature-metadata {:signature-name signature-name
+          (let [signature-metadata {:signature signature-name
                                     :category category
                                     :is-wave-signature true
                                     :capture-start-time start-time
