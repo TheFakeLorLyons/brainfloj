@@ -1114,7 +1114,8 @@
                                   :timestamp timestamp})
 
           ; Create complete metadata for this wave signature
-          (let [parent-context (:parent-recording-context wave-sig-context)
+          (let [updated-relevant-tags (filter #(>= (:timestamp %) start-time) @state/tags)
+                parent-context (:parent-recording-context wave-sig-context)
                 parent-metadata (:metadata parent-context)
 
                 signature-metadata (merge parent-metadata
