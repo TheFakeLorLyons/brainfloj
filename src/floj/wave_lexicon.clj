@@ -1114,18 +1114,22 @@
                                   :timestamp timestamp})
 
           ; Create complete metadata for this wave signature
-          (let [signature-metadata {:signature signature
-                                    :category category
-                                    :is-wave-signature true
-                                    :capture-start-time start-time
-                                    :capture-end-time timestamp
-                                    :sample-count (count raw-data-segment)
-                                    :data-start-index start-index
-                                    :data-end-index current-data-length
-                                    :recording-id (str signature "_" timestamp)
-                                    :version "1.0"
-                                    :board-id board-id
-                                    :tags relevant-tags}]
+          (let [parent-context (:parent-recording-context wave-sig-context)
+                parent-metadata (:metadata parent-context)
+
+                signature-metadata (merge parent-metadata
+                                          {:signature signature
+                                           :category category
+                                           :is-wave-signature true
+                                           :capture-start-time start-time
+                                           :capture-end-time timestamp
+                                           :sample-count (count raw-data-segment)
+                                           :data-start-index start-index
+                                           :data-end-index current-data-length
+                                           :recording-id (str signature "_" timestamp)
+                                           :version "1.0"
+                                           :board-id board-id
+                                           :tags updated-relevant-tags})]
 
             ; Write recording_metadata.edn
             (with-open [w (io/writer (str recording-dir "/recording_metadata.edn"))]
